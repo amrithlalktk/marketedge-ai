@@ -53,6 +53,9 @@ jobs:
       - name: kustomize render
         run: kubectl kustomize deploy/k8s/overlays/production > /dev/null
       - name: compose files
+        env:  # throwaway values: only the config syntax is validated here
+          SECRET_KEY: ci-only-not-a-real-secret-0123456789abcdef
+          POSTGRES_PASSWORD: ci-only
         run: |
           cp .env.example .env
           docker compose config -q

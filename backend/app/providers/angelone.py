@@ -205,10 +205,10 @@ class AngelOneOptionsProvider(OptionsDataProvider):
     name = "angelone"
     is_sample = False
 
-    def __init__(self, session: AngelOneSession, underlying_name: str = "NIFTY", spot_token: str = "99926000",
+    def __init__(self, session: AngelOneSession, underlying_name: str = "NIFTY", spot_instrument: str = "99926000",
                  n_expiries: int = 3, strike_band: float = 0.10):
         self.s = session
-        self.underlying_name, self.spot_token = underlying_name, spot_token
+        self.underlying_name, self.spot_instrument = underlying_name, spot_instrument  # Angel instrument number of the index
         self.n_expiries, self.strike_band = n_expiries, strike_band
 
     def _quotes(self, exchange: str, tokens: List[str]) -> List[dict]:
@@ -221,7 +221,7 @@ class AngelOneOptionsProvider(OptionsDataProvider):
     def get_option_chain(self, underlying: str, as_of: Optional[date] = None) -> ChainSnapshot:
         if as_of is not None and as_of != datetime.now(IST).date():
             raise AngelOneError("Angel One serves the live chain only; historical chains are not available")
-        spot_q = self._quotes("NSE", [self.spot_token])
+        spot_q = self._quotes("NSE", [self.spot_instrument])
         if not spot_q:
             raise AngelOneError("No spot quote for the underlying")
         spot = float(spot_q[0]["ltp"])
