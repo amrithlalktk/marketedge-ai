@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+html, body { background: #0b0f14; color: #e6edf5; }
+body { overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+
+@layer components {
+  .card { @apply rounded-lg border border-edge bg-panel p-3 sm:p-4; }
+  .card-title { @apply text-xs font-semibold uppercase tracking-wide text-muted; }
+  .num { @apply font-mono tabular-nums; }
+  .btn { @apply inline-flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply btn bg-accent text-white hover:bg-blue-500; }
+  .btn-ghost { @apply btn border border-edge bg-panel2 text-ink hover:bg-edge; }
+  .btn-danger { @apply btn border border-red-900 bg-red-950 text-red-200 hover:bg-red-900; }
+  .input { @apply w-full rounded-md border border-edge bg-bg px-3 py-2 text-sm text-ink placeholder:text-slate-500 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent; }
+  .label { @apply mb-1 block text-xs font-medium text-muted; }
+  .badge { @apply inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold leading-4; }
+  .tbl { @apply w-full border-collapse text-sm; }
+  .tbl th { @apply border-b border-edge px-2 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted; }
+  .tbl td { @apply border-b border-edge/60 px-2 py-1.5 align-top; }
+  .link { @apply text-accent underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm; }
+}
+
+*:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }

@@ -1,0 +1,28 @@
+# Cloud-agnostic base. Apply an overlay:  kubectl apply -k deploy/k8s/overlays/production
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: marketedge
+labels:
+  - pairs: {app.kubernetes.io/part-of: marketedge}
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - migrate-job.yaml
+  - api.yaml
+  - workers.yaml
+  - beat.yaml
+  - frontend.yaml
+  - redis.yaml
+  - ingress.yaml
+  - backup-cronjob.yaml
+  - networkpolicies.yaml
+  - pdb.yaml
+images:
+  - name: marketedge-api
+    newName: REGISTRY/marketedge-api
+    newTag: latest
+  - name: marketedge-frontend
+    newName: REGISTRY/marketedge-frontend
+    newTag: latest

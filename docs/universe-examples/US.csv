@@ -1,0 +1,10 @@
+symbol,vendor_symbol,name,asset_class,exchange,currency,sector,is_index
+SPY,SPY,SPDR S&P 500 ETF (benchmark),ETF,NYSE,USD,ETF,0
+QQQ,QQQ,Invesco QQQ Trust,ETF,NASDAQ,USD,ETF,0
+AAPL,AAPL,Apple Inc.,EQUITY,NASDAQ,USD,Technology,0
+MSFT,MSFT,Microsoft Corp.,EQUITY,NASDAQ,USD,Technology,0
+NVDA,NVDA,NVIDIA Corp.,EQUITY,NASDAQ,USD,Technology,0
+AMZN,AMZN,Amazon.com Inc.,EQUITY,NASDAQ,USD,Consumer Discretionary,0
+JPM,JPM,JPMorgan Chase & Co.,EQUITY,NYSE,USD,Financials,0
+XOM,XOM,Exxon Mobil Corp.,EQUITY,NYSE,USD,Energy,0
+UNH,UNH,UnitedHealth Group,EQUITY,NYSE,USD,Healthcare,0

@@ -1,0 +1,81 @@
+# Nightly pg_dump (custom format) to a PVC; set BACKUP_UPLOAD_CMD to ship it off-cluster
+# (object storage with versioning + lifecycle rules). Managed databases (RDS, Azure Flexible
+# Server) also have their own PITR backups — keep both. Restore: docs/OPERATIONS.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backups
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 50Gi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-script
+data:
+  backup.sh: |
+    #!/bin/sh
+    set -eu
+    [ -n "${PGPASSWORD_FILE:-}" ] && PGPASSWORD="$(cat "$PGPASSWORD_FILE")" && export PGPASSWORD
+    DIR="${BACKUP_DIR:-/backups}"; mkdir -p "$DIR"
+    FILE="$DIR/marketedge-$(date -u +%Y%m%dT%H%M%SZ).dump"
+    pg_dump --format=custom --compress=6 --no-owner --file="$FILE.partial"
+    pg_restore --list "$FILE.partial" > /dev/null
+    mv "$FILE.partial" "$FILE"
+    echo "backup ok: $FILE ($(du -h "$FILE" | cut -f1))"
+    if [ -n "${BACKUP_UPLOAD_CMD:-}" ]; then sh -c "$BACKUP_UPLOAD_CMD" _ "$FILE"; fi
+    find "$DIR" -name 'marketedge-*.dump' -mtime +"${BACKUP_KEEP_DAYS:-14}" -delete
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup
+spec:
+  schedule: "30 21 * * *"      # 21:30 UTC = 03:00 IST, after the NSE/Europe scans
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: db-backup, marketedge/db-client: "true"}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70          # postgres user in the alpine image
+            runAsGroup: 70
+            fsGroup: 70
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: pg-dump
+              image: postgres:16-alpine
+              command: ["/bin/sh", "/scripts/backup.sh"]
+              env:
+                - {name: PGHOST, value: postgres.example.internal}
+                - {name: PGUSER, value: marketedge}
+                - {name: PGDATABASE, value: marketedge}
+                - {name: PGSSLMODE, value: require}
+                - {name: PGPASSWORD_FILE, value: /run/secrets/PGPASSWORD}
+                - {name: BACKUP_KEEP_DAYS, value: "14"}
+              resources:
+                requests: {cpu: 100m, memory: 256Mi}
+                limits: {memory: 1Gi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              volumeMounts:
+                - {name: backups, mountPath: /backups}
+                - {name: scripts, mountPath: /scripts, readOnly: true}
+                - {name: secrets, mountPath: /run/secrets, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - {name: backups, persistentVolumeClaim: {claimName: backups}}
+            - {name: scripts, configMap: {name: backup-script}}
+            - {name: secrets, secret: {secretName: marketedge-secrets, defaultMode: 0400, items: [{key: PGPASSWORD, path: PGPASSWORD}]}}
+            - {name: tmp, emptyDir: {}}

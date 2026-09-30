@@ -1,0 +1,45 @@
+# In-cluster Redis (broker + cache, no persistence needed: jobs are recorded in Postgres and the
+# beat schedule re-enqueues). Swap for ElastiCache / Azure Cache for Redis by deleting this file
+# from the kustomization and pointing REDIS_URL at it (rediss:// for TLS).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels: {app.kubernetes.io/name: redis}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: redis}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: redis}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+          ports: [{name: redis, containerPort: 6379}]
+          readinessProbe: {exec: {command: ["redis-cli", "ping"]}, periodSeconds: 10}
+          resources:
+            requests: {cpu: 50m, memory: 256Mi}
+            limits: {memory: 640Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes: [{name: data, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: {app.kubernetes.io/name: redis}
+  ports: [{name: redis, port: 6379, targetPort: redis}]

@@ -1,0 +1,163 @@
+# MarketEdge AI — local/staging stack.  Usage:  cp .env.example .env && docker compose up --build
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-marketedge}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-marketedge}
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-sample}
+  FUNDAMENTALS_PROVIDER: ${FUNDAMENTALS_PROVIDER:-none}
+  CSV_DATA_DIR: /data/csv
+  BENCHMARK_SYMBOL: ${BENCHMARK_SYMBOL:-DEMO_NIFTY50}
+  VIX_SYMBOL: ${VIX_SYMBOL:-DEMO_INDIAVIX}
+  OPTIONS_DATA_PROVIDER: ${OPTIONS_DATA_PROVIDER:-sample}
+  OPTIONS_UNDERLYING: ${OPTIONS_UNDERLYING:-DEMO_NIFTY50}
+  OPTIONS_DISPLAY_NAME: ${OPTIONS_DISPLAY_NAME:-DEMO NIFTY}
+  MARKETS_ENABLED: ${MARKETS_ENABLED:-NSE,CRYPTO,US,EUROPE,ASIA,FX}
+  CRYPTO_DATA_PROVIDER: ${CRYPTO_DATA_PROVIDER:-sample}
+  GLOBAL_DATA_PROVIDER: ${GLOBAL_DATA_PROVIDER:-sample}
+  FX_DATA_PROVIDER: ${FX_DATA_PROVIDER:-sample}
+  BENCHMARK_CRYPTO: ${BENCHMARK_CRYPTO:-DEMO_BTC}
+  BINANCE_UNIVERSE_SIZE: ${BINANCE_UNIVERSE_SIZE:-40}
+  BINANCE_EXCLUDE: ${BINANCE_EXCLUDE:-}
+  BENCHMARK_US: ${BENCHMARK_US:-DEMO_US500}
+  BENCHMARK_EUROPE: ${BENCHMARK_EUROPE:-DEMO_EU600}
+  BENCHMARK_ASIA: ${BENCHMARK_ASIA:-DEMO_ASIA50}
+  BENCHMARK_FX: ${BENCHMARK_FX:-DEMO_DXY}
+  TWELVEDATA_API_KEY: ${TWELVEDATA_API_KEY:-}
+  NEWS_PROVIDER: ${NEWS_PROVIDER:-sample}
+  CALENDAR_PROVIDER: ${CALENDAR_PROVIDER:-sample}
+  FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANALYST_MODEL: ${ANALYST_MODEL:-claude-opus-5-5}
+  ANALYST_EFFORT: ${ANALYST_EFFORT:-medium}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+  TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+  VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+  VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}
+  WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+  WHATSAPP_TEMPLATE: ${WHATSAPP_TEMPLATE:-}
+  BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+  BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+  LOG_FORMAT: ${LOG_FORMAT:-text}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  METRICS_TOKEN: ${METRICS_TOKEN:-}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  ALLOW_SAMPLE_IN_PRODUCTION: ${ALLOW_SAMPLE_IN_PRODUCTION:-false}
+  WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+  PREWARM_TOP_N: ${PREWARM_TOP_N:-40}
+  DEFAULT_MARKET: ${DEFAULT_MARKET:-}
+  ANGEL_HISTORY_DAYS: ${ANGEL_HISTORY_DAYS:-2200}
+  UPSTOX_REDIRECT_URI: ${UPSTOX_REDIRECT_URI:-http://localhost:3000/api/v1/upstox/callback}
+  UPSTOX_HISTORY_DAYS: ${UPSTOX_HISTORY_DAYS:-2200}
+  ANGEL_UNIVERSE_SIZE: ${ANGEL_UNIVERSE_SIZE:-500}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-marketedge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-marketedge}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-marketedge}"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: {context: ./backend, args: {DEV_TOOLS: "true"}}   # keeps pip for in-container tests
+    environment: *backend-env
+    volumes: [marketdata:/data/csv]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports: ["8000:8000"]
+    restart: unless-stopped
+
+  # Celery workers, one per queue (heavy CPU work never delays alerts/notifications):
+  #   worker            default + notifications   prefork, concurrency 2
+  #   worker-scans      scans (ingest/scan/options) solo pool so a task can fork SCAN_WORKERS per-symbol processes
+  #   worker-backtests  backtests + ML training   solo pool, likewise
+  worker:
+    build: {context: ./backend, args: {DEV_TOOLS: "true"}}   # keeps pip for in-container tests
+    environment: *backend-env
+    volumes: [marketdata:/data/csv]
+    command: ["celery", "-A", "app.workers.celery_app.celery", "worker", "-Q", "default,notifications", "-n", "default@%h",
+              "--loglevel=INFO", "--concurrency=2"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery inspect ping -d default@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 60s
+      timeout: 15s
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+  worker-scans:
+    build: {context: ./backend, args: {DEV_TOOLS: "true"}}   # keeps pip for in-container tests
+    environment:
+      <<: *backend-env
+      SCAN_WORKERS: ${SCAN_WORKERS:-4}
+    volumes: [marketdata:/data/csv]
+    command: ["celery", "-A", "app.workers.celery_app.celery", "worker", "-Q", "scans", "-n", "scans@%h", "--pool=solo", "--loglevel=INFO"]
+    healthcheck:
+      disable: true   # a solo worker cannot answer ping while it is busy with a scan
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+  worker-backtests:
+    build: {context: ./backend, args: {DEV_TOOLS: "true"}}   # keeps pip for in-container tests
+    environment:
+      <<: *backend-env
+      SCAN_WORKERS: ${BACKTEST_WORKERS:-4}
+    volumes: [marketdata:/data/csv]
+    command: ["celery", "-A", "app.workers.celery_app.celery", "worker", "-Q", "backtests", "-n", "backtests@%h", "--pool=solo", "--loglevel=INFO"]
+    healthcheck:
+      disable: true
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+  beat:
+    build: {context: ./backend, args: {DEV_TOOLS: "true"}}   # keeps pip for in-container tests
+    environment: *backend-env
+    command: ["celery", "-A", "app.workers.celery_app.celery", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        API_URL: http://api:8000   # Next.js rewrites are fixed at build time
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["3000:3000"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  marketdata:

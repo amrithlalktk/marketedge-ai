@@ -1,0 +1,28 @@
+# analysis engine
+pandas>=2.2,<3
+numpy>=1.26,<3
+# api
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30
+pydantic>=2.7,<3
+pydantic-settings>=2.7
+email-validator>=2.1
+sqlalchemy>=2.0.30,<2.1
+psycopg[binary]>=3.1
+alembic>=1.13
+redis>=5.0
+celery>=5.4
+pyjwt>=2.8
+argon2-cffi>=23.1
+pyotp>=2.9
+cryptography>=42
+httpx>=0.27
+# Web Push notifications (Phase 7; optional — push is 'not configured' without VAPID keys)
+pywebpush>=2.0; python_version >= "3.10"
+# ML layer (Phase 6)
+scikit-learn>=1.6,<2
+skops>=0.9
+anthropic>=1.9,<2; python_version >= "3.10"  # AI analyst (optional; rule-based fallback without it)
+# ops (Phase 8)
+prometheus-client>=0.20
+sentry-sdk>=2.0   # optional — only initialised when SENTRY_DSN is set
