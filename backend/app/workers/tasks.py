@@ -231,10 +231,21 @@ def upstox_reminder_db(db) -> dict:
     from app.providers.registry import upstox_token
 
     _UPSTOX_MEMO.update(at=None)
-    title = "Connect Upstox before the 18:30 NSE scan"
+    title = "Upstox token not working: paste a new one before the 18:30 NSE scan"
     try:
+        from app.providers.upstox import UpstoxAuthError as _UAE
+        from app.providers.upstox import token_rejected_at, verify_token
+
         upstox_client().preflight()
         t = upstox_token() or {}
+        try:  # a stored token can be revoked/regenerated long before its expiry date: ask Upstox
+            verify_token(t["access_token"])
+        except _UAE:
+            raise
+        except Exception as exc:  # network hiccup: do not alarm
+            log.warning("Upstox token check skipped: %s", exc)
+        if token_rejected_at(t.get("access_token")):
+            raise _UAE("rejected")
         exp = t.get("expires_at")
         if t.get("kind") != "analytics" or not exp or datetime.fromisoformat(exp) - datetime.now(timezone.utc) > _td(days=14):
             return {"connected": True}

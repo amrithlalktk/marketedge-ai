@@ -404,6 +404,7 @@ export const api = {
     status: () =>
       request<{
         mode: "analytics" | "daily" | null;
+        rejected_at?: string | null;
         configured: boolean;
         connected: boolean;
         expires_at: string | null;

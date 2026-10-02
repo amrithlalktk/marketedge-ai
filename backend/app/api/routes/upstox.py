@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from pydantic import BaseModel, Field
 
-from app.providers.upstox import IST, UpstoxAuthError, UpstoxError, authorize_url, exchange_code, verify_token
+from app.providers.upstox import IST, UpstoxAuthError, UpstoxError, authorize_url, exchange_code, token_rejected_at, verify_token
 from app.services.audit import audit
 
 router = APIRouter(prefix="/upstox", tags=["providers"])
@@ -48,7 +48,10 @@ def status():
     configured = bool(registry.provider_secret("upstox", "API_KEY") and registry.provider_secret("upstox", "API_SECRET"))
     exp = registry.provider_secret("upstox", "ACCESS_TOKEN_EXPIRES")
     daily = bool(exp and registry.provider_secret("upstox", "ACCESS_TOKEN") and datetime.fromisoformat(exp) > now)
-    return {"mode": "analytics" if analytics else "daily" if daily else None, "connected": analytics or daily,
+    current = registry.provider_secret("upstox", "ANALYTICS_TOKEN" if analytics else "ACCESS_TOKEN")
+    rejected = token_rejected_at(current) if (analytics or daily) else None
+    return {"mode": "analytics" if analytics else "daily" if daily else None, "connected": (analytics or daily) and not rejected,
+            "rejected_at": rejected,
             "expires_at": a_exp if analytics else exp if daily else None, "configured": configured, "redirect_uri": s.upstox_redirect_uri,
             "used_for": {"market_data": s.market_data_provider == "upstox", "options": s.options_data_provider == "upstox"},
             "note": ("Analytics token: read-only, valid 1 year, no daily login." if analytics else

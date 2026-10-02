@@ -60,12 +60,43 @@ def authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
                                                                   "response_type": "code", "state": state})
 
 
+def _fingerprint(token: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def mark_token_rejected(token: str) -> None:
+    """Remember that Upstox answered 401 for this token (fingerprint only, never the token) so the UI and the daily
+    reminder can say so. Note: Upstox's historical-candle API is public, so stock data keeps loading with a dead
+    token — only quotes and the option chain fail, which is why this must be surfaced explicitly."""
+    try:
+        from app.core.cache import get_cache
+
+        get_cache().set_json("upstox:token_rejected", {"fp": _fingerprint(token), "at": datetime.now(IST).isoformat()}, ttl=30 * 86400)
+    except Exception:  # noqa: S110  # nosec B110
+        pass
+
+
+def token_rejected_at(token: Optional[str]) -> Optional[str]:
+    if not token:
+        return None
+    try:
+        from app.core.cache import get_cache
+
+        flag = get_cache().get_json("upstox:token_rejected")
+    except Exception:
+        return None
+    return flag["at"] if flag and flag.get("fp") == _fingerprint(token) else None
+
+
 def verify_token(token: str, http: Optional[httpx.Client] = None) -> None:
     """Cheap read-only check that a token works (last traded price of Nifty 50)."""
     http = http or httpx.Client(timeout=20.0)
     r = http.get(f"{API}/v2/market-quote/ltp", params={"instrument_key": "NSE_INDEX|Nifty 50"},
                  headers={"Accept": "application/json", "Authorization": f"Bearer {token}"})
     if r.status_code == 401:
+        mark_token_rejected(token)
         raise UpstoxAuthError("Upstox did not accept this token (check you copied the whole Analytics token)")
     if r.status_code != 200:
         raise UpstoxError(f"Upstox check failed with HTTP {r.status_code}")
@@ -117,6 +148,7 @@ class UpstoxClient:
         r = self.http.get(API + path, params=params, headers={"Accept": "application/json", "Authorization": f"Bearer {tok}"})
         self._last = time.monotonic()
         if r.status_code == 401:
+            mark_token_rejected(tok)
             raise UpstoxAuthError("Upstox rejected the token (expired, revoked or regenerated). Update it in Admin → Providers.")
         if r.status_code == 429 and _retry < 4:  # rate limited: back off 2 s, 4 s, 8 s, 16 s
             time.sleep(2 * (2 ** _retry))

@@ -222,3 +222,24 @@ def test_today_bar_from_batch_quotes(monkeypatch):
     df, _ = p.get_ohlcv("RELIANCE", start=yday)
     assert list(df.index.date) == [yday, today] and df.loc[pd.Timestamp(today), "close"] == 105
     assert list(p.get_ohlcv("NIFTY50", start=yday)[0].index.date) == [yday]
+
+
+def test_rejected_token_is_surfaced(app_client, admin_headers, monkeypatch):
+    """Upstox's historical API is public, so a dead token only shows up on quotes/option chain: it must be visible."""
+    from app.api.routes import upstox as route
+    from app.providers import registry
+
+    monkeypatch.setattr(route, "verify_token", lambda tok: None)
+    assert app_client.put("/api/v1/upstox/analytics-token", headers=admin_headers, json={"token": "LIVE-" + "z" * 40}).status_code == 200
+    registry._UPSTOX_MEMO.update(at=None)
+    assert app_client.get("/api/v1/upstox/status", headers=admin_headers).json()["connected"] is True
+    c = ux.UpstoxClient(registry.upstox_token, client=httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(401, json={"status": "error", "errors": [{"errorCode": "UDAPI100050", "message": "Invalid token used to access API"}]}))), pause_s=0)
+    with pytest.raises(ux.UpstoxAuthError):
+        c.get("/v2/option/chain", {"instrument_key": "NSE_INDEX|Nifty 50", "expiry_date": "2026-10-06"})
+    st = app_client.get("/api/v1/upstox/status", headers=admin_headers).json()
+    assert st["connected"] is False and st["rejected_at"]
+    # a new token clears it (different fingerprint)
+    assert app_client.put("/api/v1/upstox/analytics-token", headers=admin_headers, json={"token": "NEW-" + "q" * 40}).status_code == 200
+    registry._UPSTOX_MEMO.update(at=None)
+    assert app_client.get("/api/v1/upstox/status", headers=admin_headers).json()["connected"] is True

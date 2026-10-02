@@ -375,7 +375,8 @@ function UpstoxCard() {
         <div className="space-y-3 text-sm">
           <p>
             Status:{" "}
-            {d.mode === "analytics" ? <Pill tone="green">analytics token · valid until ~{dateTime(d.expires_at)}</Pill>
+            {d.rejected_at ? <Pill tone="red">token rejected by Upstox ({dateTime(d.rejected_at)}): generate a new one and paste it below</Pill>
+              : d.mode === "analytics" ? <Pill tone="green">analytics token · valid until ~{dateTime(d.expires_at)}</Pill>
               : d.mode === "daily" ? <Pill tone="green">connected until {dateTime(d.expires_at)}</Pill>
               : <Pill tone="amber">not connected</Pill>}
             {" "}· used for {[d.used_for.market_data && "NSE market data", d.used_for.options && "NIFTY options"].filter(Boolean).join(" and ") || "nothing yet"}
