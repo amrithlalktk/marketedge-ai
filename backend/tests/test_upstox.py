@@ -216,7 +216,8 @@ def test_today_bar_from_batch_quotes(monkeypatch):
                 "NSE_INDEX:Nifty 50": {"instrument_token": "NSE_INDEX|Nifty 50", "live_ohlc": {"open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 0, "ts": day_ms(yday)}}}})
         return httpx.Response(200, json={"status": "success", "data": {"candles": [[f"{yday}T00:00:00+05:30", 90, 99, 89, 98, 5, 0]]}})
 
-    p = ux.UpstoxProvider(_client(h))
+    tok = {"access_token": "AT", "expires_at": (fixed + timedelta(days=1)).isoformat()}  # valid at the pretended time
+    p = ux.UpstoxProvider(_client(h, token=tok))
     assert p.prefetch(["RELIANCE", "NIFTY50", "INDIAVIX"]) == 1        # Nifty quote is dated yesterday (holiday case) → skipped
     assert len(batches) == 1 and len(batches[0]) == 3
     df, _ = p.get_ohlcv("RELIANCE", start=yday)
