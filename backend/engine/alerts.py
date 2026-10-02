@@ -28,16 +28,17 @@ KINDS = {
     "resistance_break": "Close above the last confirmed swing high",
     "new_setup": "A new VALID setup matches a filter (market / strategy / direction / minimum score)",
     "unusual_options": "Unusual NIFTY options activity (open-interest change far above normal)",
+    "daily_ideas": "Every trading day after the NSE scan: today's NIFTY option and stock ideas, or 'No trade today' with the reason",
 }
 PARAMS = {
     "price_above": ["level"], "price_below": ["level"], "price_cross": ["level"], "entry_reached": ["low", "high"],
     "target_reached": ["level", "direction"], "stop_reached": ["level", "direction"], "volume_spike": ["multiple"],
     "rsi_cross_above": ["level"], "rsi_cross_below": ["level"], "ema_cross_up": ["fast", "slow"], "ema_cross_down": ["fast", "slow"],
     "breakout": [], "breakdown": [], "support_break": [], "resistance_break": [],
-    "new_setup": [], "unusual_options": [],
+    "new_setup": [], "unusual_options": [], "daily_ideas": [],
 }
 OPTIONAL_PARAMS = {"new_setup": ["market", "strategy", "direction", "min_score"], "unusual_options": ["multiple"]}
-BAR_KINDS = set(KINDS) - {"new_setup", "unusual_options"}
+BAR_KINDS = set(KINDS) - {"new_setup", "unusual_options", "daily_ideas"}
 
 
 def validate_params(kind: str, params: Dict) -> Dict:

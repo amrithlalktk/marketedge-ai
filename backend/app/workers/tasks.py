@@ -89,8 +89,16 @@ def ingest_and_scan(market: Optional[str] = None):
     if s.feature_on("news"):
         news(None, market)  # fresh headlines/sentiment before the scan attaches them to setups
     scan(None, market)
-    if market == "NSE" and s.feature_on("options"):
-        return options(None)
+    if market == "NSE":
+        if s.feature_on("options"):
+            options(None)
+        db = SessionLocal()
+        try:  # one message per session with today's ideas (or "No trade today"), after options so both are in it
+            from app.services.alert_service import daily_ideas_alerts
+
+            return {"daily_ideas_sent": daily_ideas_alerts(db)}
+        finally:
+            db.close()
 
 
 @celery.task(name="app.workers.tasks.backtest")

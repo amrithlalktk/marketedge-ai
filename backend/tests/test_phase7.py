@@ -402,3 +402,28 @@ def test_sample_data_is_prefix_stable():
     for m in ("CRYPTO", "FX"):
         x, y = sample_global.build(m, date(2026, 9, 29)), sample_global.build(m, date(2026, 10, 2))
         assert all((y.bars[k].loc[x.bars[k].index] == x.bars[k]).all().all() for k in x.bars)
+
+
+def test_daily_ideas_digest_once_per_session(app_client, admin_headers, scanned):
+    from app.core.db import SessionLocal
+    from app.models import Notification
+    from app.services.alert_service import daily_ideas_alerts, daily_ideas_text
+
+    r = app_client.post(f"{API}/alerts", json={"kind": "daily_ideas", "params": {}, "repeat": True}, headers=admin_headers)
+    assert r.status_code == 201, r.text
+    db = SessionLocal()
+    try:
+        d = daily_ideas_text(db)
+        assert d and d["as_of"]
+        if d["ideas"]:
+            assert "entry" in d["body"] and "stop loss" in d["body"] and "past cases" in d["body"] and "not guarantees" in d["body"]
+        else:
+            assert d["title"].startswith("No trade today") and "safety check" in d["body"]
+        before = db.query(Notification).count()
+        assert daily_ideas_alerts(db) >= 1
+        assert daily_ideas_alerts(db) == 0                    # same session: never sent twice
+        assert db.query(Notification).count() > before
+    finally:
+        db.close()
+    kinds = {k["kind"]: k for k in app_client.get(f"{API}/alerts/kinds", headers=admin_headers).json()["kinds"]}
+    assert kinds["daily_ideas"]["needs_symbol"] is False

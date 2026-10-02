@@ -117,3 +117,64 @@ def alerts_from_setup(db: Session, user_id: int, setup: dict, signal_id: int, ki
         made.append(a)
     db.commit()
     return made
+
+
+# ---------------------------------------------------------------- daily trade ideas digest
+def _money(v) -> str:
+    return "–" if v is None else (f"{v:,.2f}" if abs(v) < 1000 else f"{v:,.1f}")
+
+
+def _chance(p: dict) -> str:
+    if not p or p.get("t1_hit_rate") is None or not p.get("sample_size"):
+        return "chance: not enough history"
+    return f"{p['t1_hit_rate']:.0f}% reach target 1 ({p['sample_size']} past cases)"
+
+
+def daily_ideas_text(db: Session) -> Optional[dict]:
+    """Today's VALID NIFTY option and NSE stock setups as plain lines (or 'No trade today' with the reasons)."""
+    from app.models import Signal
+    from app.services.scan_service import latest_run
+
+    nse, nfo = latest_run(db, "NSE"), latest_run(db, "NFO")
+    if nse is None:
+        return None
+    lines = []
+    if nfo is not None:
+        for sg in db.scalars(select(Signal).where(Signal.scan_run_id == nfo.id, Signal.status == "VALID").order_by(Signal.score.desc()).limit(3)):
+            o = sg.payload or {}
+            c, t = o.get("contract") or {}, o.get("targets") or [None, None]
+            lines.append(f"{c.get('label', sg.symbol)}: entry ₹{_money(o.get('entry'))}, stop loss ₹{_money(o.get('stop'))}, "
+                         f"exit ₹{_money(t[0])} / ₹{_money(t[1])} · {_chance(o.get('probability') or {})}")
+    for sg in db.scalars(select(Signal).where(Signal.scan_run_id == nse.id, Signal.status == "VALID").order_by(Signal.score.desc()).limit(5)):
+        x = sg.payload or {}
+        lo, hi = (x.get("entry_zone") or [None, None])[:2]
+        t = x.get("targets") or [None, None]
+        entry = _money(lo) if lo == hi else f"{_money(lo)}–{_money(hi)}"
+        lines.append(f"{sg.symbol} {sg.direction}: entry {entry}, stop loss {_money(x.get('stop'))}, "
+                     f"exit {_money(t[0])} / {_money(t[1])} · {_chance(x.get('probability') or {})}")
+    as_of = str(nse.as_of)
+    if lines:
+        title = f"Trade ideas from the {as_of} close: {len(lines)}"
+        body = "\n".join(lines) + "\nChances are historical frequencies, not guarantees. Always place the stop loss."
+    else:
+        why = [m for m in ((nfo.stats or {}).get("market_message") if nfo else None, (nse.stats or {}).get("market_message")) if m]
+        title = f"No trade today ({as_of} close)"
+        body = "No NIFTY option or stock setup passed every safety check. " + " ".join(why)
+    return {"as_of": as_of, "title": title, "body": body, "ideas": len(lines)}
+
+
+def daily_ideas_alerts(db: Session) -> int:
+    """Send the digest once per session to every active 'daily_ideas' alert (idempotent via last_bar = session date)."""
+    digest = daily_ideas_text(db)
+    if digest is None:
+        return 0
+    now, sent = datetime.now(timezone.utc), 0
+    for a in db.scalars(select(Alert).where(Alert.status == "active", Alert.kind == "daily_ideas")):
+        if a.last_bar == digest["as_of"]:
+            continue
+        notify(db, a.user_id, digest["title"], digest["body"] + (f" — {a.note}" if a.note else ""), link="/",
+               payload={"alert_id": a.id, "as_of": digest["as_of"], "ideas": digest["ideas"]}, channels=a.channels or None, alert_id=a.id)
+        a.last_bar, a.last_triggered_at, a.trigger_count = digest["as_of"], now, a.trigger_count + 1
+        sent += 1
+    db.commit()
+    return sent
