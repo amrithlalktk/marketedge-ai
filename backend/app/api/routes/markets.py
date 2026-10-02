@@ -22,7 +22,10 @@ def latest_snapshot(db: Session, kind: str, market: Optional[str] = None) -> Opt
     cached = get_cache().get_json(key)
     if cached is not None:
         return cached
-    row = db.scalar(select(MarketSnapshot).where(MarketSnapshot.market == market, MarketSnapshot.kind == kind).order_by(MarketSnapshot.id.desc()).limit(1))
+    from app.services.scan_service import matches_provider, snapshot_is_sample
+
+    rows = db.scalars(select(MarketSnapshot).where(MarketSnapshot.market == market, MarketSnapshot.kind == kind).order_by(MarketSnapshot.id.desc()).limit(25))
+    row = next((r for r in rows if matches_provider(market, snapshot_is_sample(db, r))), None)
     if row is None:
         return None
     out = {**row.payload, "snapshot_created_at": row.created_at.isoformat(), "scan_run_id": row.scan_run_id}

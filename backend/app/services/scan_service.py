@@ -404,8 +404,34 @@ def resolve_outcomes(db: Session, feats: Dict[str, pd.DataFrame], bt: BacktestCo
     return n
 
 
+def provider_is_sample(market: str) -> bool:
+    from app.core.markets import market_config
+
+    if market == "NFO":
+        return get_settings().options_data_provider == "sample"
+    return market_config(market).provider == "sample"
+
+
+def matches_provider(market: str, is_sample) -> bool:
+    """A result is shown only if it came from the market's CURRENT kind of data: after a market switches from
+    SAMPLE to a real provider, the old sample scans stay in the database but are never displayed again."""
+    return is_sample is None or bool(is_sample) == provider_is_sample(market)
+
+
 def latest_run(db: Session, market: str) -> Optional[ScanRun]:
-    return db.scalar(select(ScanRun).where(ScanRun.market == market, ScanRun.status == "done").order_by(ScanRun.id.desc()).limit(1))
+    for run in db.scalars(select(ScanRun).where(ScanRun.market == market, ScanRun.status == "done").order_by(ScanRun.id.desc()).limit(25)):
+        if matches_provider(market, (run.stats or {}).get("is_sample")):
+            return run
+    return None
+
+
+def snapshot_is_sample(db: Session, row) -> Optional[bool]:
+    run = db.get(ScanRun, row.scan_run_id) if row.scan_run_id else None
+    flag = (run.stats or {}).get("is_sample") if run is not None else None
+    if flag is None and isinstance(row.payload, dict):
+        data = row.payload.get("data")
+        flag = row.payload.get("is_sample", data.get("is_sample") if isinstance(data, dict) else None)
+    return flag
 
 
 def prewarm(db: Session, market: str, setups: list) -> dict:

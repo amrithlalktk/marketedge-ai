@@ -187,7 +187,7 @@ def run_options(db: Session, today: Optional[date] = None) -> ScanRun:
                           payload=_json_safe(st)))
         db.add(MarketSnapshot(scan_run_id=run.id, market=MARKET, kind="options", as_of=ts.astimezone(ch_ist()).date(), payload=_json_safe(out)))
         run.as_of = ts.astimezone(ch_ist()).date()
-        run.stats = {"option_setups": len(out["option_setups"]), "valid": sum(x["status"] == "VALID" for x in out["option_setups"]),
+        run.stats = {"is_sample": bool(meta["is_sample"]), "option_setups": len(out["option_setups"]), "valid": sum(x["status"] == "VALID" for x in out["option_setups"]),
                      "strategies_proposed": len(out["strategies"]["proposed"]), "index_events": int(len(events)), "status": out["status"],
                      "market_message": out["market_message"]}
         run.status, run.finished_at = "done", datetime.now(timezone.utc)

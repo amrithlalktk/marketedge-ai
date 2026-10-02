@@ -428,3 +428,24 @@ def test_queued_scan_for_disabled_market_is_skipped(monkeypatch):
 
     monkeypatch.setattr(get_settings(), "markets_enabled", ["NSE", "CRYPTO"])
     assert "skipped" in ingest_and_scan.run("US")
+
+
+def test_sample_results_hidden_once_market_uses_real_data(app_client, admin_headers, scanned, monkeypatch):
+    from app.core.cache import get_cache
+    from app.core.db import SessionLocal
+    from app.services.scan_service import latest_run
+
+    db = SessionLocal()
+    try:
+        assert latest_run(db, "NSE") is not None                       # sample provider: sample scans are current
+        monkeypatch.setattr(get_settings(), "market_data_provider", "upstox")
+        monkeypatch.setattr(get_settings(), "options_data_provider", "upstox")
+        get_cache().invalidate_prefix("me:")
+        assert latest_run(db, "NSE") is None                           # switched to real data: old DEMO scan never shown
+        top = app_client.get("/api/v1/signals/top?market=NSE", headers=admin_headers)
+        assert top.status_code == 404 or not top.json().get("items")
+        assert app_client.get("/api/v1/markets/overview?market=NSE", headers=admin_headers).status_code == 404
+        assert app_client.get("/api/v1/options/signals", headers=admin_headers).status_code == 404
+    finally:
+        get_cache().invalidate_prefix("me:")
+        db.close()

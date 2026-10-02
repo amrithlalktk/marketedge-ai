@@ -22,9 +22,12 @@ def _snapshot(db: Session) -> dict:
     cached = get_cache().get_json(key)
     if cached is not None:
         return cached
-    row = db.scalar(select(MarketSnapshot).where(MarketSnapshot.market == MARKET, MarketSnapshot.kind == "options").order_by(MarketSnapshot.id.desc()).limit(1))
+    from app.services.scan_service import matches_provider, snapshot_is_sample
+
+    rows = db.scalars(select(MarketSnapshot).where(MarketSnapshot.market == MARKET, MarketSnapshot.kind == "options").order_by(MarketSnapshot.id.desc()).limit(25))
+    row = next((r for r in rows if matches_provider(MARKET, snapshot_is_sample(db, r))), None)
     if row is None:
-        raise HTTPException(404, "No options analysis computed yet. An administrator must run options ingestion and analysis.")
+        raise HTTPException(404, "No options analysis on the current data source yet. It runs after the daily NSE scan (18:30 IST).")
     out = {**row.payload, "snapshot_created_at": row.created_at.isoformat(), "scan_run_id": row.scan_run_id}
     get_cache().set_json(key, out, ttl=600)
     return out
