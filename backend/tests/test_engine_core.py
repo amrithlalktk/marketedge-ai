@@ -17,7 +17,7 @@ from engine.metrics import hit_rates, wilson_interval
 from engine.probability import estimate
 from engine.regime import classify
 from engine.risk import position_size, volatility_position_size
-from engine.strategies import STRATEGIES, StrategyDefinitionError, build_custom_strategy, detect
+from engine.strategies import STRATEGIES, detect
 from engine.structure import confirmed_pivots
 from engine.validation import validate, verdict
 from engine.walkforward import default_segments, walk_forward_windows
@@ -256,17 +256,6 @@ def test_position_size_capped_by_capital_and_lots():
     assert v["stop"] == 96 and v["quantity"] == 250
 
 
-def test_custom_strategy_dsl():
-    f = build_features(random_walk(400, seed=2))
-    spec = build_custom_strategy({"name": "x", "direction": "LONG", "conditions": [
-        {"left": "rsi", "op": ">", "right": 55}, {"left": "close", "op": ">", "right": "ema50"}, {"left": "close", "op": "crosses_above", "right": "ema20"}]})
-    sig = detect(spec, f)
-    assert sig.dtype == bool
-    assert ((f["rsi"] > 55) | ~sig).all()
-    with pytest.raises(StrategyDefinitionError):
-        build_custom_strategy({"direction": "LONG", "conditions": [{"left": "__import__('os')", "op": ">", "right": 1}]})
-    with pytest.raises(StrategyDefinitionError):
-        build_custom_strategy({"direction": "LONG", "conditions": [{"left": "rsi", "op": "==", "right": 1}]})
 
 
 def test_hit_rates_counts():

@@ -113,7 +113,7 @@ export function ErrorState({ error, onRetry, what }: { error: ApiError | Error |
     );
   } else if (status === 403) {
     title = "Permission required";
-    hint = <>Your account role does not include this feature. Ask an administrator to upgrade your plan (Premium unlocks the full setup list, NO TRADE candidates and backtests).</>;
+    hint = <>Your account role does not include this feature. Ask an administrator to upgrade your plan (Premium unlocks the full setup list and NO TRADE candidates).</>;
   } else if (status === 429) {
     title = "Rate limit reached";
     hint = <>Too many requests in the last minute. Wait a moment and retry.</>;

@@ -19,41 +19,37 @@ export const CURRENCY_SYMBOL: Record<string, string> = {
   INR: "₹", USD: "$", EUR: "€", GBP: "£", JPY: "¥", HKD: "HK$", SGD: "S$", KRW: "₩", CAD: "C$", AUD: "A$", CHF: "CHF ", USDT: "$",
 };
 
-/**
- * Decimal places appropriate for a price's magnitude: never force 2 dp on FX rates or sub-cent tokens.
- * FX: 5 dp below 20 (EUR/USD 1.17305), 3 dp for JPY/INR-type rates, 2 dp for ≥ 1000 (USD/KRW).
- */
-export function pxDigits(v: number, fx = false): number {
+/** Decimal places appropriate for a price's magnitude: never force 2 dp on sub-cent tokens. */
+export function pxDigits(v: number): number {
   const a = Math.abs(v);
   if (!Number.isFinite(a) || a === 0) return 2;
-  if (fx) return a >= 1000 ? 2 : a >= 20 ? 3 : 5;
   if (a >= 1) return 2;
   if (a >= 0.01) return 4;
   return Math.min(10, Math.ceil(-Math.log10(a)) + 3);
 }
 
 /** Magnitude-aware number (no currency symbol). Pass `ref` to format a set of levels with one precision. */
-export function px(v: number | null | undefined, opts: { fx?: boolean; ref?: number; currency?: string | null } = {}): string {
+export function px(v: number | null | undefined, opts: { ref?: number; currency?: string | null } = {}): string {
   if (!ok(v)) return DASH;
-  const d = pxDigits(opts.ref ?? v, opts.fx);
+  const d = pxDigits(opts.ref ?? v);
   const loc = !opts.currency || opts.currency === "INR" ? "en-IN" : "en-US";
   return new Intl.NumberFormat(loc, { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
 }
 
-/**
- * Price in instrument currency with its symbol ($, €, £, ¥, HK$, S$, ₩, ₹). FX rates are shown without a symbol
- * (they are exchange rates, not prices). INR uses Indian digit grouping.
- */
-export function price(v: number | null | undefined, currency: string | null | undefined = "INR", opts: { fx?: boolean; ref?: number } = {}): string {
+/** Price in instrument currency with its symbol ($ or ₹). INR uses Indian digit grouping. */
+export function price(v: number | null | undefined, currency: string | null | undefined = "INR", opts: { ref?: number } = {}): string {
   if (!ok(v)) return DASH;
   const n = px(Math.abs(v), { ...opts, currency: currency ?? "INR", ref: opts.ref != null ? Math.abs(opts.ref) : undefined });
-  if (opts.fx) return `${v < 0 ? "-" : ""}${n}`;
   const sym = CURRENCY_SYMBOL[currency ?? "INR"] ?? `${currency} `;
   return `${v < 0 ? "-" : ""}${sym}${n}`;
 }
 
-export function isFx(assetClassOrMarket?: string | null): boolean {
-  return assetClassOrMarket === "FOREX" || assetClassOrMarket === "FX";
+/** Money in a portfolio's base currency: ₹ with Indian grouping for INR, otherwise the currency symbol (e.g. $). */
+export function money(v: number | null | undefined, currency: string | null | undefined = "INR", decimals: 0 | 2 = 2): string {
+  if (!ok(v)) return DASH;
+  if (!currency || currency === "INR") return inr(v, decimals);
+  const n = new Intl.NumberFormat("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(Math.abs(v));
+  return `${v < 0 ? "-" : ""}${CURRENCY_SYMBOL[currency] ?? `${currency} `}${n}`;
 }
 
 export function num(v: number | null | undefined, decimals = 2): string {
@@ -112,22 +108,6 @@ export function humanize(key: string): string {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** "Tue, 30 Sept, 11:30 pm IST" — economic calendar times are shown in IST. */
-export function istDateTime(iso: string | null | undefined, withDate = true): string {
-  if (!iso) return DASH;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const opts: Intl.DateTimeFormatOptions = withDate
-    ? { timeZone: "Asia/Kolkata", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }
-    : { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" };
-  return `${d.toLocaleString("en-IN", opts)} IST`;
-}
-
-/** IST calendar date key (YYYY-MM-DD) for grouping. */
-export function istDateKey(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-}
-
 /** Viewer-local date/time. */
 export function localDateTime(iso: string | null | undefined): string {
   if (!iso) return DASH;
@@ -146,9 +126,4 @@ export function relTime(iso: string | null | undefined, now = Date.now()): strin
   const txt = m < 1 ? "now" : m < 60 ? `${m}m` : m < 60 * 48 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
   if (txt === "now") return "just now";
   return ms < 0 ? `${txt} ago` : `in ${txt}`;
-}
-
-/** Hours from now until an ISO time (negative = past). Computed live, not from the scan's stored value. */
-export function hoursUntil(iso: string, now = Date.now()): number {
-  return (new Date(iso).getTime() - now) / 3600000;
 }

@@ -1,0 +1,65 @@
+name: daily
+# The end-of-day pipeline (the app has no always-on workers on Vercel):
+#   NSE    18:30 IST Mon–Fri → prices → scan → NIFTY options → "daily trade ideas" message
+#   CRYPTO 06:00 IST daily   → prices → scan
+# Also runnable by hand (Actions → daily → Run workflow) or from the app (Admin → Jobs → Run now).
+on:
+  schedule:
+    - cron: "0 13 * * 1-5"   # 13:00 UTC = 18:30 IST
+    - cron: "30 0 * * *"     # 00:30 UTC = 06:00 IST
+  workflow_dispatch:
+    inputs:
+      market:
+        description: "Market"
+        type: choice
+        options: [NSE, CRYPTO]
+        default: NSE
+      full:
+        description: "Full history reload (first run: true)"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-${{ github.event.inputs.market || (github.event.schedule == '30 0 * * *' && 'CRYPTO' || 'NSE') }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults: {run: {working-directory: backend}}
+    env:
+      MARKET: ${{ github.event.inputs.market || (github.event.schedule == '30 0 * * *' && 'CRYPTO' || 'NSE') }}
+      FULL: ${{ github.event.inputs.full || 'false' }}
+      ENVIRONMENT: production
+      COOKIE_SECURE: "true"
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+      BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+      BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+      MARKET_DATA_PROVIDER: ${{ vars.MARKET_DATA_PROVIDER || 'upstox' }}
+      OPTIONS_DATA_PROVIDER: ${{ vars.OPTIONS_DATA_PROVIDER || 'upstox' }}
+      CRYPTO_DATA_PROVIDER: ${{ vars.CRYPTO_DATA_PROVIDER || 'binance' }}
+      BENCHMARK_SYMBOL: ${{ vars.BENCHMARK_SYMBOL || 'NIFTY50' }}
+      VIX_SYMBOL: ${{ vars.VIX_SYMBOL || 'INDIAVIX' }}
+      OPTIONS_UNDERLYING: ${{ vars.OPTIONS_UNDERLYING || 'NIFTY50' }}
+      OPTIONS_DISPLAY_NAME: ${{ vars.OPTIONS_DISPLAY_NAME || 'NIFTY 50' }}
+      BENCHMARK_CRYPTO: ${{ vars.BENCHMARK_CRYPTO || 'BTCUSDT' }}
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
+      SCAN_WORKERS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt}
+      - run: pip install -r requirements.txt
+      - name: migrate database
+        run: alembic upgrade head
+      - name: run ${{ env.MARKET }} pipeline
+        run: |
+          ARGS="$MARKET"; [ "$FULL" = "true" ] && ARGS="$ARGS --full"
+          python -m app.cli daily $ARGS

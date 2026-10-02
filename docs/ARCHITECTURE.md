@@ -1,5 +1,17 @@
 # MarketEdge AI — Architecture
 
+> **Lite build (October 2026).** The deployed app was reduced to **NSE + NIFTY options + crypto** and runs on **Vercel (website and API) + Neon Postgres + GitHub Actions (daily pipeline)**. See [DEPLOYMENT.md](DEPLOYMENT.md).
+>
+> **Removed, still in git history:**
+> - US, Europe, Asia and forex markets;
+> - news and sentiment, calendars;
+> - the AI analyst and the ML layer;
+> - the hit-rate explorer, the backtest lab and the custom strategy builder;
+> - Celery, Redis and the Kubernetes and Docker production manifests.
+>
+> Sections below that describe these components are historical.
+
+
 MarketEdge AI is an **analysis and research platform**. It finds trading setups using explicit rules, then reports how the *same* rules performed historically (sample size, period, methodology). It does not predict the future and never presents probabilities as guarantees.
 
 Status markers in this document: **[built]** = implemented and tested in this repository; **[phase N]** = designed here, delivered in that phase.

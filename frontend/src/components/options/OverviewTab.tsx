@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { compact, hoursUntil, integer, moveClass, num, pct } from "@/lib/format";
-import { EventRow } from "../NewsEvents";
+import { compact, integer, moveClass, num, pct } from "@/lib/format";
 import type { OptionsOverview } from "@/lib/types";
 import { Card, DataStamp, EmptyState, Pill, Segmented, Stat, cx } from "../ui";
 import { OiProfileChart, TermStructureChart } from "./charts";
@@ -70,36 +69,6 @@ function BuildupTable({ rows }: { rows: BuildupRow[] }) {
   );
 }
 
-function OptionsEventRisk({ ev }: { ev: NonNullable<OptionsOverview["events"]> }) {
-  const now = Date.now();
-  const upcoming = ev.upcoming.filter((e) => hoursUntil(e.event_time, now) > -1);
-  const exp = Object.entries(ev.high_impact_before_expiry ?? {});
-  return (
-    <Card title="Event risk">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div>
-          <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Upcoming releases</h3>
-          {upcoming.length === 0 ? <p className="text-xs text-muted">None in the window.</p> : <ul className="divide-y divide-edge">{upcoming.map((e) => <EventRow key={`${e.name}-${e.event_time}`} e={e} now={now} />)}</ul>}
-        </div>
-        <div>
-          <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">High-impact releases before each expiry</h3>
-          {exp.length === 0 ? <p className="text-xs text-muted">None.</p> : (
-            <ul className="divide-y divide-edge text-xs">
-              {exp.map(([x, names]) => (
-                <li key={x} className="py-1.5">
-                  <span className="num font-semibold">{x}</span> <span className="text-muted">({names.length})</span>
-                  <span className="mt-0.5 flex flex-wrap gap-1">{names.map((n, ni) => <Pill key={`${n}-${ni}`} tone="red">{n.replace(/\s*\(sample\)/i, "")}</Pill>)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-      <p className="mt-2 text-[11px] text-muted">High-impact releases within 24h block option setups and short-volatility strategies; holding a short option through such a release adds gap risk.</p>
-    </Card>
-  );
-}
-
 export function OverviewTab({ ov }: { ov: OptionsOverview }) {
   const u = ov.underlying;
   const ms = ov.market_state;
@@ -110,7 +79,6 @@ export function OverviewTab({ ov }: { ov: OptionsOverview }) {
   return (
     <div className="space-y-4">
       <MarketMessage ov={ov} />
-      {ov.events && <OptionsEventRisk ev={ov.events} />}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card title={u.name} right={<DataStamp meta={ov.data} asOf={u.as_of} />}>

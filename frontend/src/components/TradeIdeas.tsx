@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { featureOn, marketOn } from "@/lib/market";
+import { marketOn } from "@/lib/market";
 import { DASH, inr, price, rr } from "@/lib/format";
 import type { OptionSetup, ProbabilitySummary, SetupSummary } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
@@ -84,7 +84,7 @@ function StockIdea({ s }: { s: SetupSummary }) {
  */
 export function TradeIdeas() {
   const { can } = useAuth();
-  const optOn = featureOn("options") && marketOn("NSE") && can("options:signals");
+  const optOn = marketOn("NSE") && can("options:signals");
   const opts = useApi(() => api.options.signals(), [], optOn);
   const nse = useApi(() => api.signals.top({ limit: 5, market: "NSE" }), [], marketOn("NSE") && can("signals:read"));
   const cry = useApi(() => api.signals.top({ limit: 3, market: "CRYPTO" }), [], marketOn("CRYPTO") && can("signals:read"));

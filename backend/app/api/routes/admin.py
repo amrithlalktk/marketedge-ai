@@ -8,16 +8,15 @@ from app.api.deps import ip_of, require
 from app.core.cache import get_cache
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.core.observability import queue_depths, readiness
+from app.core.observability import readiness
 from app.models import AuditLog, Job, ProviderCredential, Role, ScanRun, User
 from app.core.security import encrypt
-from app.providers.registry import FUNDAMENTAL_PROVIDERS, MARKET_PROVIDERS, market_provider
+from app.providers.registry import MARKET_PROVIDERS, market_provider
 from app.schemas import ProviderKeyIn, RoleChange, ScoringSettingsIn, StrategyControlIn
 from app.services.audit import audit
 from app.services.market_data import provider_status
 from app.services.settings_service import (engine_config, engine_overrides, save_engine_overrides, set_strategy_enabled,
                                            strategy_controls)
-from app.workers import tasks
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -35,7 +34,7 @@ def health(db: Session = Depends(get_db)):
             "last_scan": {"id": last.id, "status": last.status, "as_of": str(last.as_of) if last.as_of else None,
                           "started_at": last.started_at.isoformat(), "error": last.error, "stats": last.stats} if last else None,
             "failed_jobs": db.scalar(select(func.count()).select_from(Job).where(Job.status == "failed")),
-            "readiness": readiness(), "queues": queue_depths()}
+            "readiness": readiness()}
 
 
 @router.get("/settings/engine", dependencies=[Depends(require("admin:settings"))])
@@ -60,7 +59,7 @@ def providers(db: Session = Depends(get_db)):
 
     return {"market_data": {"active": s.market_data_provider, "available": sorted(MARKET_PROVIDERS)},
             "options": {"active": s.options_data_provider, "available": sorted(OPTIONS_PROVIDERS), "underlying": s.options_underlying},
-            "fundamentals": {"active": s.fundamentals_provider, "available": sorted(FUNDAMENTAL_PROVIDERS)},
+            "crypto": {"active": s.crypto_data_provider, "available": ["binance", "sample"]},
             "api_keys": [{"id": k.id, "provider": k.provider, "name": k.name, "enabled": k.enabled, "created_at": k.created_at.isoformat()} for k in keys],
             "status": provider_status(db)}
 
@@ -77,68 +76,45 @@ def add_key(body: ProviderKeyIn, request: Request, db: Session = Depends(get_db)
     return {"id": row.id, "provider": row.provider, "name": row.name}
 
 
+def _job(request: Request, db: Session, user: User, kind: str, **params) -> dict:
+    """Run a job now. JOB_RUNNER=inline (local/tests): executed in this request. JOB_RUNNER=github (Vercel): the daily
+    GitHub Actions workflow is dispatched instead, because a serverless request cannot run for up to an hour."""
+    from app import jobs
+
+    audit(db, f"job.{kind}", user.id, str(params), ip=ip_of(request))
+    s = get_settings()
+    if s.job_runner == "github":
+        try:
+            return jobs.dispatch_github(params.get("market", "NSE"), bool(params.get("full")))
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
+    fn = {"ingest": jobs.ingest, "scan": jobs.scan, "options": jobs.options, "daily": jobs.daily}[kind]
+    job = jobs.run_job(db, kind, fn, created_by=user.id, **params)
+    return {"job_id": job.id, "status": job.status}
+
+
+MARKET = Query("NSE", pattern="^(NSE|CRYPTO)$")
+
+
 @router.post("/jobs/ingest", status_code=202)
-def run_ingest(request: Request, full: bool = False, market: str = Query("NSE", pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX)$"),
-               db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
-    job = Job(kind="ingest", params={"full": full, "market": market}, created_by=user.id)
-    db.add(job)
-    db.commit()
-    audit(db, "job.ingest", user.id, str(job.id), ip=ip_of(request))
-    tasks.ingest.delay(job.id, market, full)
-    return {"job_id": job.id}
+def run_ingest(request: Request, full: bool = False, market: str = MARKET, db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
+    return _job(request, db, user, "ingest", market=market, full=full)
 
 
 @router.post("/jobs/scan", status_code=202)
-def run_scan(request: Request, market: str = Query("NSE", pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX)$"),
-             db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
-    job = Job(kind="scan", params={"market": market}, created_by=user.id)
-    db.add(job)
-    db.commit()
-    audit(db, "job.scan", user.id, str(job.id), ip=ip_of(request))
-    tasks.scan.delay(job.id, market)
-    return {"job_id": job.id}
+def run_scan(request: Request, market: str = MARKET, db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
+    return _job(request, db, user, "scan", market=market)
 
 
 @router.post("/jobs/options", status_code=202)
 def run_options(request: Request, db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
-    job = Job(kind="options", params={}, created_by=user.id)
-    db.add(job)
-    db.commit()
-    audit(db, "job.options", user.id, str(job.id), ip=ip_of(request))
-    tasks.options.delay(job.id)
-    return {"job_id": job.id}
+    return _job(request, db, user, "options")
 
 
-@router.post("/jobs/news", status_code=202)
-def run_news(request: Request, market: str = Query("NSE", pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX)$"),
-             db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
-    job = Job(kind="news", params={"market": market}, created_by=user.id)
-    db.add(job)
-    db.commit()
-    audit(db, "job.news", user.id, str(job.id), ip=ip_of(request))
-    tasks.news.delay(job.id, market)
-    return {"job_id": job.id}
-
-
-@router.post("/jobs/calendar", status_code=202)
-def run_calendar(request: Request, db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
-    job = Job(kind="calendar", params={}, created_by=user.id)
-    db.add(job)
-    db.commit()
-    audit(db, "job.calendar", user.id, str(job.id), ip=ip_of(request))
-    tasks.calendar.delay(job.id)
-    return {"job_id": job.id}
-
-
-@router.post("/jobs/ml-train", status_code=202)
-def run_ml_train(request: Request, market: str = Query("NSE", pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX)$"),
-                 db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
-    job = Job(kind="ml_train", params={"market": market}, created_by=user.id)
-    db.add(job)
-    db.commit()
-    audit(db, "job.ml_train", user.id, str(job.id), ip=ip_of(request))
-    tasks.ml_train.delay(job.id, market, user.id)
-    return {"job_id": job.id}
+@router.post("/jobs/daily", status_code=202)
+def run_daily(request: Request, market: str = MARKET, full: bool = False, db: Session = Depends(get_db), user: User = Depends(require("admin:jobs"))):
+    """The whole end-of-day pipeline for one market (what the schedule runs)."""
+    return _job(request, db, user, "daily", market=market, full=full)
 
 
 @router.post("/jobs/paper-tick")
@@ -195,6 +171,26 @@ def audit_logs(db: Session = Depends(get_db), limit: int = Query(100, ge=1, le=5
         q = q.where(AuditLog.action == action)
     return {"items": [{"id": a.id, "user_id": a.user_id, "action": a.action, "target": a.target, "detail": a.detail, "ip": a.ip,
                        "created_at": a.created_at.isoformat()} for a in db.scalars(q)]}
+
+
+@router.get("/strategies", dependencies=[Depends(require("admin:settings"))])
+def strategies(market: str = Query("NSE", pattern="^(NSE|CRYPTO)$"), db: Session = Depends(get_db)):
+    """Built-in strategies with their latest historical performance in `market` and whether they are switched off there."""
+    from app.api.routes.markets import latest_snapshot
+    from engine.strategies import STRATEGIES
+
+    perf = {p["strategy"]["id"]: p for p in (latest_snapshot(db, "strategy_performance", market) or {}).get("strategies", [])}
+    off = strategy_controls(db).get(market) or {}
+
+    def panel(p):
+        if not p:
+            return None
+        sm = p.get("summary", {})
+        return {"backtest_period": p.get("backtest_period"), "trades": sm.get("sample_size"), "t1_hit_rate": sm.get("t1_hit_rate"),
+                "stop_rate": sm.get("stop_rate"), "profit_factor": sm.get("profit_factor"), "expectancy_r": sm.get("expectancy_r"),
+                "segments": p.get("segments"), "warnings": p.get("warnings")}
+    return {"market": market, "items": [{**spec.public(), "performance": panel(perf.get(sid)), "disabled": off.get(sid)}
+                                        for sid, spec in STRATEGIES.items()]}
 
 
 @router.get("/strategy-controls", dependencies=[Depends(require("admin:settings"))])

@@ -7,7 +7,7 @@ the input order, so parallel and serial runs produce identical output.
 
 Falls back to serial execution when `workers <= 1`, when fork is unavailable (Windows),
 on macOS (fork is unsafe with some system frameworks), or inside a daemonic process
-(e.g. a Celery prefork child — run scan workers with `--pool=solo`).
+(e.g. inside a worker that is itself a daemonic child process).
 """
 from __future__ import annotations
 

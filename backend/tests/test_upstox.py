@@ -158,7 +158,7 @@ def test_reminder_notifies_admins_when_not_connected(app_client, monkeypatch):
     from app.core.db import SessionLocal
     from app.models import Notification
     from app.providers import registry
-    from app.workers.tasks import upstox_reminder_db
+    from app.jobs import upstox_check as upstox_reminder_db
 
     monkeypatch.setattr(get_settings(), "market_data_provider", "upstox")
     monkeypatch.setattr(registry, "upstox_token", lambda: {"access_token": None, "expires_at": None})

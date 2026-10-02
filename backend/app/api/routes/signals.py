@@ -56,7 +56,7 @@ def _load(db: Session, status: str, market: str):
     return run, rows
 
 
-MARKET_Q = Query(None, pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX)$")
+MARKET_Q = Query(None, pattern="^(NSE|CRYPTO)$")
 SORT_NOTE = "Sorting orders current setups by a measured attribute; it is not a ranking of future performance."
 
 
@@ -147,19 +147,3 @@ market_router = APIRouter(tags=["signals"])
 def crypto_signals(db: Session = Depends(get_db), user: User = Depends(require("signals:read")), limit: int = Query(20, ge=1, le=100),
                    sort: str = Query("score", pattern="^(score|rr|hit_rate|volume|momentum)$"), direction: Optional[str] = Query(None, pattern="^(LONG|SHORT)$")):
     return _top(db, user, ["CRYPTO"], limit, sort, direction)
-
-
-@market_router.get("/global/signals")
-def global_signals(db: Session = Depends(get_db), user: User = Depends(require("signals:read")), limit: int = Query(20, ge=1, le=100),
-                   sort: str = Query("score", pattern="^(score|rr|hit_rate|volume|momentum)$"), direction: Optional[str] = Query(None, pattern="^(LONG|SHORT)$"),
-                   region: Optional[str] = Query(None, pattern="^(US|EUROPE|ASIA)$")):
-    from engine.markets import GLOBAL_MARKETS
-
-    ms = [region] if region else [m for m in GLOBAL_MARKETS if _load(db, "VALID", m)[0] is not None]
-    return _top(db, user, ms or ["US"], limit, sort, direction)
-
-
-@market_router.get("/forex/signals")
-def forex_signals(db: Session = Depends(get_db), user: User = Depends(require("signals:read")), limit: int = Query(20, ge=1, le=100),
-                  sort: str = Query("score", pattern="^(score|rr|hit_rate|volume|momentum)$"), direction: Optional[str] = Query(None, pattern="^(LONG|SHORT)$")):
-    return _top(db, user, ["FX"], limit, sort, direction)

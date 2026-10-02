@@ -63,7 +63,7 @@ def test_unauthenticated_and_rbac(app_client, admin_headers):
     assert app_client.get(f"{API}/markets/overview").status_code == 401
     h = make_user(app_client, "std@example.com")
     assert app_client.get(f"{API}/admin/users", headers=h).status_code == 403
-    assert app_client.post(f"{API}/backtests", json={"strategy_key": "breakout_volume"}, headers=h).status_code == 403
+    assert app_client.post(f"{API}/admin/jobs/scan", headers=h).status_code == 403
     assert app_client.get(f"{API}/admin/users", headers=admin_headers).status_code == 200
 
 
@@ -118,8 +118,8 @@ def test_stock_endpoints(app_client, admin_headers, scanned):
 
 
 def test_strategies_have_performance_panel(app_client, admin_headers, scanned):
-    s = app_client.get(f"{API}/strategies", headers=admin_headers).json()
-    bo = next(x for x in s["builtin"] if x["id"] == "breakout_volume")
+    s = app_client.get(f"{API}/admin/strategies?market=NSE", headers=admin_headers).json()
+    bo = next(x for x in s["items"] if x["id"] == "breakout_volume")
     assert bo["performance"]["trades"] > 0 and bo["performance"]["backtest_period"]
     assert set(bo["performance"]["segments"]) == {"training", "validation", "out_of_sample"}
 
@@ -150,31 +150,6 @@ def test_risk_calculator(app_client, admin_headers):
 
 
 # ------------------------------------------------------------------ backtests
-def test_backtest_builtin_and_custom(app_client, admin_headers, scanned):
-    h = make_user(app_client, "prem@example.com", role="premium", admin_headers=admin_headers)
-    r = app_client.post(f"{API}/backtests", json={"strategy_key": "pullback_ema20", "walk_forward": True,
-                                                  "grid": {"atr_stop_mult": [1.5, 2.0]}}, headers=h)
-    assert r.status_code == 202
-    bt = app_client.get(f"{API}/backtests/{r.json()['id']}", headers=h).json()
-    assert bt["status"] == "done", bt["error"]
-    res = bt["result"]
-    assert res["summary"]["sample_size"] > 0 and "equity_curve" in res["summary"]
-    assert res["warnings"][0].startswith("Backtest ran on SAMPLE")
-    assert res["walk_forward"]["folds"] and "monte_carlo" in res
-    trades = app_client.get(f"{API}/backtests/{bt['id']}/trades?page_size=5", headers=h).json()
-    assert trades["total"] == res["summary"]["sample_size"] and len(trades["items"]) == 5
-
-    custom = {"definition": {"name": "RSI+EMA", "direction": "LONG", "conditions": [
-        {"left": "rsi", "op": ">", "right": 55}, {"left": "close", "op": ">", "right": "ema50"},
-        {"left": "vol_ratio20", "op": ">", "right": 1.5}, {"left": "adx", "op": ">", "right": 20}]}, "walk_forward": False}
-    r = app_client.post(f"{API}/backtests", json=custom, headers=h)
-    assert r.status_code == 202
-    assert app_client.get(f"{API}/backtests/{r.json()['id']}", headers=h).json()["status"] == "done"
-    other = make_user(app_client, "prem2@example.com", role="premium", admin_headers=admin_headers)
-    assert app_client.get(f"{API}/backtests/{bt['id']}", headers=other).status_code == 404
-
-    bad = {"definition": {"name": "x", "direction": "LONG", "conditions": [{"left": "os.system", "op": ">", "right": 1}]}}
-    assert app_client.post(f"{API}/backtests", json=bad, headers=h).status_code == 422
 
 
 # ------------------------------------------------------------------ admin settings

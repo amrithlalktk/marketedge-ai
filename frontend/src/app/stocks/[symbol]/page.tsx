@@ -1,24 +1,18 @@
 "use client";
 
-import { featureOn } from "@/lib/market";
-
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AddToWatchlist } from "@/components/AddToWatchlist";
-import { AnalystPanel } from "@/components/AnalystPanel";
-import { StockEventsSection } from "@/components/StockEvents";
-import { MlLine, MlPanel } from "@/components/MlBlocks";
 import { SetupActions } from "@/components/SetupActions";
-import { EventRiskBlock, NewsFlowBlock } from "@/components/NewsEvents";
 import { INDICATORS, PriceChart, type IndicatorKey } from "@/components/PriceChart";
 import { HitRate, ScoreBadge } from "@/components/SetupCard";
 import { ChecksPanel, LevelsPanel, MtfPanel, ProbabilityPanel, ScoreBreakdown, WhyPanel } from "@/components/SetupSections";
 import { Card, Collapsible, DataStamp, DirectionBadge, Disclaimer, EmptyState, ErrorState, Loading, Pill, Segmented, Skeleton, Stat, StatusBadge, TableWrap, cx } from "@/components/ui";
 import { api } from "@/lib/api";
-import { compact, humanize, isFx, moveClass, num, price, px, rr, signedPct } from "@/lib/format";
+import { compact, humanize, moveClass, num, price, px, rr, signedPct } from "@/lib/format";
 import { marketLabel } from "@/lib/market";
-import { CardExtras, DerivativesPanel, InrPanel, PipsPanel } from "@/components/MarketBlocks";
+import { CardExtras, DerivativesPanel, InrPanel } from "@/components/MarketBlocks";
 import type { Analysis, Candles, SetupDetail, StockDetail } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
@@ -26,7 +20,7 @@ type Mode = "hybrid" | "technical" | "fundamental";
 const DEFAULT_ON: IndicatorKey[] = ["ema20", "ema50", "ema200", "volume", "levels", "patterns", "rsi"];
 
 function ActiveSetup({ s }: { s: SetupDetail }) {
-  const o = { fx: isFx(s.market), ref: s.current_price };
+  const o = { ref: s.current_price };
   return (
     <article className="rounded-lg border border-edge bg-panel2/40 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -41,7 +35,7 @@ function ActiveSetup({ s }: { s: SetupDetail }) {
             <span className="text-up">{px(s.targets[1], o)}</span> · R:R {rr(s.rr_t2)} · {s.currency}
           </p>
           <div className="mt-1"><HitRate p={s.probability} compact /></div>
-          <div className="mt-1"><CardExtras s={s} />{featureOn("ml") && <MlLine ml={s.ml} />}</div>
+          <div className="mt-1"><CardExtras s={s} /></div>
           <div className="mt-1"><DataStamp meta={s.data} asOf={s.as_of} /></div>
         </div>
         <ScoreBadge score={s.score} label={s.score_label} />
@@ -55,16 +49,12 @@ function ActiveSetup({ s }: { s: SetupDetail }) {
       <div className="mt-3">
         <Collapsible title="Full setup analysis">
           <div className="space-y-3">
-            {s.events && featureOn("calendar") && <EventRiskBlock ev={s.events} checks={s.checks} />}
-            {s.news && featureOn("news") && <NewsFlowBlock n={s.news} />}
             {s.inr && <InrPanel i={s.inr} currency={s.currency} />}
-            {s.pips && <PipsPanel p={s.pips} />}
             {s.derivatives && <DerivativesPanel d={s.derivatives} marketCap={s.market_cap_usd} spreadBps={s.spread_bps} />}
             <LevelsPanel s={s} />
             <ScoreBreakdown components={s.components} score={s.score} label={s.score_label} notes={s.score_notes} />
             <WhyPanel e={s.explanation} />
             <ProbabilityPanel p={s.probability} />
-            {featureOn("ml") && <MlPanel ml={s.ml} />}
             <ChecksPanel checks={s.checks} />
             <MtfPanel m={s.mtf} />
           </div>
@@ -75,7 +65,6 @@ function ActiveSetup({ s }: { s: SetupDetail }) {
 }
 
 function AnalysisSection({ symbol, onSetup, market }: { symbol: string; onSetup: (s: SetupDetail | null) => void; market?: string }) {
-  const fxm = isFx(market);
   const [mode, setMode] = useState<Mode>("hybrid");
   const a = useApi<Analysis>(async () => {
     const r = await api.stocks.analysis(symbol, mode);
@@ -116,7 +105,7 @@ function AnalysisSection({ symbol, onSetup, market }: { symbol: string; onSetup:
                 {Object.entries(d.state.structure).map(([k, v]) => (
                   <div key={k} className="rounded border border-edge px-2 py-1">
                     <dt className="text-muted">{humanize(k)}</dt>
-                    <dd className={cx("num", v === true && "text-up", v === false && "text-muted")}>{v == null ? "—" : typeof v === "boolean" ? (v ? "Yes" : "No") : px(v, { fx: fxm })}</dd>
+                    <dd className={cx("num", v === true && "text-up", v === false && "text-muted")}>{v == null ? "—" : typeof v === "boolean" ? (v ? "Yes" : "No") : px(v)}</dd>
                   </div>
                 ))}
               </dl>
@@ -142,7 +131,7 @@ function AnalysisSection({ symbol, onSetup, market }: { symbol: string; onSetup:
                   {[...d.state.levels].sort((x, y) => y.price - x.price).map((l, li) => (
                     <li key={`${l.kind}-${l.price}-${li}`} className="grid grid-cols-[6rem_1fr] items-center gap-x-3 py-1 sm:grid-cols-[6rem_6rem_1fr]">
                       <span className={l.kind === "support" ? "text-up" : "text-down"}>{l.kind}</span>
-                      <span className="num">{px(l.price, { fx: fxm })}</span>
+                      <span className="num">{px(l.price)}</span>
                       <span className="col-span-2 text-xs text-muted sm:col-span-1 sm:text-right">{l.touches} touches · last {l.last_touch}</span>
                     </li>
                   ))}
@@ -188,10 +177,6 @@ export default function StockPage() {
   const [showTrade, setShowTrade] = useState(true);
   const info = useApi<StockDetail>(() => api.stocks.get(symbol), [symbol]);
   const candles = useApi<Candles>(() => api.stocks.candles(symbol, interval, limit), [symbol, interval, limit]);
-  const fxm = isFx(info.data?.market ?? info.data?.asset_class);
-  useEffect(() => {
-    if (fxm) setOn((prev) => { const n = new Set(prev); n.delete("volume"); return n; });
-  }, [fxm]);
 
   if (info.error) return <><ErrorState error={info.error} onRetry={info.reload} what={symbol} /><p className="mt-3"><Link href="/stocks" className="link text-sm">← Back to stocks</Link></p></>;
   const d = info.data;
@@ -212,10 +197,10 @@ export default function StockPage() {
                 {d.delisted_on && <Pill tone="red">Delisted {d.delisted_on}</Pill>}
               </div>
               <p className="truncate text-sm text-muted">{d.name} · {d.exchange}{d.sector ? ` · ${d.sector}` : ""}{d.market === "NSE" ? ` · lot ${d.lot_size}` : ""}</p>
-              <p className="text-xs text-muted">{marketLabel(d.market)} · exchange {d.exchange} · {fxm ? `quoted in ${d.currency}` : `prices in ${d.currency}`} · {d.asset_class}</p>
+              <p className="text-xs text-muted">{marketLabel(d.market)} · exchange {d.exchange} · prices in {d.currency} · {d.asset_class}</p>
               {qt && (
                 <p className="mt-1 flex flex-wrap items-baseline gap-x-3">
-                  <span className="num text-2xl font-semibold">{price(qt.price, d.currency, { fx: fxm })}</span>
+                  <span className="num text-2xl font-semibold">{price(qt.price, d.currency)}</span>
                   <span className={cx("num text-sm font-semibold", moveClass(qt.change_1d_pct))}>{signedPct(qt.change_1d_pct)} 1D</span>
                   <span className={cx("num text-sm", moveClass(qt.change_1w_pct))}>{signedPct(qt.change_1w_pct)} 1W</span>
                 </p>
@@ -227,9 +212,9 @@ export default function StockPage() {
         )}
         {qt && (
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Stat label="52w high" value={price(qt.high_52w, d?.currency, { fx: fxm })} />
-            <Stat label="52w low" value={price(qt.low_52w, d?.currency, { fx: fxm })} />
-            <Stat label="Volume" value={fxm ? "n/a (FX)" : compact(qt.volume)} />
+            <Stat label="52w high" value={price(qt.high_52w, d?.currency)} />
+            <Stat label="52w low" value={price(qt.low_52w, d?.currency)} />
+            <Stat label="Volume" value={compact(qt.volume)} />
             <Stat label="From 52w high" value={signedPct(100 * (qt.price / qt.high_52w - 1))} valueClass={moveClass(qt.price / qt.high_52w - 1)} />
           </div>
         )}
@@ -261,7 +246,7 @@ export default function StockPage() {
           </div>
         </fieldset>
         {candles.error ? <ErrorState error={candles.error} onRetry={candles.reload} what="candles" /> : candles.data ? (
-          <PriceChart fx={fxm} candles={candles.data} enabled={on} trade={setup && showTrade ? { entry: setup.entry_zone, stop: setup.stop, targets: setup.targets } : undefined} height={360} />
+          <PriceChart candles={candles.data} enabled={on} trade={setup && showTrade ? { entry: setup.entry_zone, stop: setup.stop, targets: setup.targets } : undefined} height={360} />
         ) : <Skeleton className="h-[360px]" />}
         {on.has("patterns") && candles.data && !["geo_upper", "geo_lower", "cup_rim"].some((k) => (candles.data!.bars[k] as (number | null)[] | undefined)?.some((x) => x != null)) && <p className="mt-2 text-[11px] text-muted">No geometric pattern (triangle / rectangle / cup rim) in the displayed bars.</p>}
         {on.has("patterns") && <p className="mt-1 text-[11px] text-muted">Patterns: amber dashed = triangle/rectangle bounds, purple dashed = cup-and-handle rim.</p>}
@@ -270,12 +255,10 @@ export default function StockPage() {
 
       <div className="mt-4"><AnalysisSection symbol={symbol} onSetup={setSetup} market={d?.market} /></div>
 
-      {(featureOn("news") || featureOn("calendar")) && <div className="mt-4"><StockEventsSection symbol={symbol} /></div>}
-      {featureOn("analyst") && <div className="mt-4"><AnalystPanel symbol={symbol} title={`Ask the analyst about ${symbol}`} /></div>}
       <div className="mt-4">
         <Card title="Fundamentals">
           {!d ? <Skeleton className="h-10" /> : d.market && d.market !== "NSE" ? (
-            <EmptyState title="No fundamentals feed for this market">{fxm ? "Currency pairs have no company fundamentals; rate-differential and macro-calendar feeds are not configured." : "Scores for this market use technical components only."}</EmptyState>
+            <EmptyState title="No fundamentals feed for this market">Scores for this market use technical components only.</EmptyState>
           ) : d.fundamentals_available && d.fundamentals ? (
             <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
               {Object.entries(d.fundamentals).map(([k, v]) => (

@@ -16,8 +16,8 @@ def pit_top_n(market: str) -> Optional[int]:
     s = get_settings()
     if market == "CRYPTO" and market_config(market).provider == "binance" and s.binance_pit_universe:
         return s.binance_universe_size
-    if market == "NSE" and market_config(market).provider in ("angelone", "upstox"):
-        return s.angel_universe_size
+    if market == "NSE" and market_config(market).provider == "upstox":
+        return s.upstox_universe_size or 500  # top N of the stored pool by traded value, per date
     return None
 
 

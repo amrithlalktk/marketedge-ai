@@ -1,9 +1,7 @@
 import Link from "next/link";
-import { isFx, num, pct, period, price, px, rr } from "@/lib/format";
+import { num, pct, period, price, px, rr } from "@/lib/format";
 import { marketLabel } from "@/lib/market";
 import { CardExtras } from "./MarketBlocks";
-import { featureOn } from "@/lib/market";
-import { MlLine } from "./MlBlocks";
 import type { ProbabilitySummary, SetupSummary } from "@/lib/types";
 import { Bar, DataStamp, DirectionBadge, StatusBadge } from "./ui";
 
@@ -48,8 +46,7 @@ function Lvl({ k, v, cls }: { k: string; v: React.ReactNode; cls?: string }) {
 
 export function SetupCard({ s, showBlocking = false }: { s: SetupSummary; showBlocking?: boolean }) {
   const cur = s.currency ?? "INR";
-  const fx = isFx(s.market);
-  const o = { fx, ref: s.current_price };
+  const o = { ref: s.current_price };
   return (
     <article className="card flex min-w-0 flex-col gap-3" aria-labelledby={`setup-${s.id}`}>
       <header className="flex items-start justify-between gap-2">
@@ -87,7 +84,6 @@ export function SetupCard({ s, showBlocking = false }: { s: SetupSummary; showBl
         <Bar value={s.score} />
       </div>
       <CardExtras s={s} />
-      {featureOn("ml") && <MlLine ml={s.ml} />}
 
       {s.reasons.length > 0 && (
         <ul className="space-y-0.5 text-xs">

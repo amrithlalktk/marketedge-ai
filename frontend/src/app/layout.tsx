@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: "MarketEdge AI", template: "%s · MarketEdge AI" },
-  description: "Swing-trading analysis platform: setups, historical probabilities, backtests and risk tools. Analytical information only.",
+  description: "Swing-trading analysis platform: setups, historical probabilities, paper trading and risk tools. Analytical information only.",
   robots: { index: false, follow: false },
 };
 

@@ -1,159 +1,113 @@
-# MarketEdge AI — Deployment
+# MarketEdge AI (lite): deploy on Vercel + Neon + GitHub Actions
 
-There are three supported targets, all built from the same two images (`backend/`, `frontend/`):
+This guide sets up a free hosting of MarketEdge AI for one user. It is written for whoever does the setup, and assumes basic familiarity with GitHub and a web browser.
 
-| Target | Use for | Files |
+## How the pieces fit
+
+| Piece | Runs on | What it does |
 |---|---|---|
-| Docker Compose (dev) | local development, demos with SAMPLE data | `docker-compose.yml` |
-| Docker Compose (production, single host) | a small deployment on one VM with automatic TLS | `docker-compose.prod.yml`, `ops/caddy/Caddyfile` |
-| Kubernetes | anything that needs HA or autoscaling (EKS, AKS, GKE, or self-managed) | `deploy/k8s/` (kustomize) |
+| Website (Next.js) | **Vercel** project 1, root folder `frontend/` | The pages. It proxies `/api/v1/*` to the API, so the browser only ever talks to one address. |
+| API (FastAPI) | **Vercel** project 2, root folder `backend/` | Serverless functions with a 60 s limit. They only read prepared results. |
+| Database | **Neon** Postgres (free 0.5 GB) | Everything: prices, scans, users and encrypted provider keys. |
+| Daily pipeline | **GitHub Actions** (`.github/workflows/daily.yml`) | Runs NSE at 18:30 IST on weekdays (prices → scan → NIFTY options → daily ideas message) and crypto at 06:00 IST every day. |
 
-Nothing here is tied to one cloud. The notes below map each piece to AWS and Azure services.
+There are no servers, queues or always-on workers. The free tiers are enough:
 
-## Production checklist (every target)
+- **Database:** about 300 NSE stocks with 4 years of history, plus 40 coins, comes to about 100 MB.
+- **GitHub Actions:** the daily runs take about 10 minutes, roughly 400 of the 2,000 free minutes a month.
 
-**Licensed data.** Production refuses to start with sample (`DEMO_`) providers.
-* Configure licensed providers (see ARCHITECTURE §12).
-* Or, for a clearly labelled demo only, set `ALLOW_SAMPLE_IN_PRODUCTION=true`.
+## Before you start
 
-**Secrets:**
-* `SECRET_KEY` (≥ 32 random chars)
-* `ENCRYPTION_KEY` (Fernet)
-* `METRICS_TOKEN`
-* the database password
-
-Supply them as files (`*_FILE`) from Docker/Kubernetes secrets or your cloud secret manager, never baked into images. Provider API keys go in Admin → Providers, where they are stored encrypted.
-
-**Enforced at start-up:**
-* `COOKIE_SECURE=true` and TLS end to end at the edge;
-* default or short secrets are refused.
-
-**Backups** are scheduled and a restore has been rehearsed ([OPERATIONS.md](OPERATIONS.md#backups-and-restore)). `ENCRYPTION_KEY` is stored separately from them.
-
-**Monitoring:**
-* Prometheus scrapes `/metrics` with the token;
-* alert rules are loaded;
-* logs are shipped (`LOG_FORMAT=json`).
-
-**Exactly one `beat` scheduler.**
-
-## Single host: `docker-compose.prod.yml`
-
-Caddy obtains and renews Let's Encrypt certificates. It is the only service that publishes ports (80 for the ACME challenge and redirect, 443). Postgres and Redis sit on the `data` network, which is marked `internal` and has no route in or out. The API, workers, beat and frontend run with a read-only root filesystem, `no-new-privileges` and all capabilities dropped; Redis also runs read-only.
+### 1. Generate the secrets
+Run this on your computer:
 
 ```sh
-cp .env.example .env
-# edit .env: ENVIRONMENT=production, DOMAIN=marketedge.example.com, ACME_EMAIL=you@example.com,
-#            MARKET_DATA_PROVIDER=..., *_DATA_PROVIDER=..., BOOTSTRAP_ADMIN_EMAIL/PASSWORD (first boot only)
-mkdir -p secrets && chmod 700 secrets
-openssl rand -hex 32 > secrets/secret_key
-python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())" > secrets/encryption_key
-openssl rand -hex 24 > secrets/postgres_password
-openssl rand -hex 24 > secrets/metrics_token
-docker compose -f docker-compose.prod.yml up -d --build
+python3 -c "import secrets;print('SECRET_KEY=' + secrets.token_hex(32))"
+python3 -c "from cryptography.fernet import Fernet;print('ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
 ```
 
-* **DNS:** point the domain's A/AAAA record at the host before the first start, so the certificate can be issued.
-* **Migrations:** the API runs `alembic upgrade head` on start (`RUN_MIGRATIONS=true`).
-* **Backups:** go to `./backups` nightly. Set `BACKUP_UPLOAD_CMD` for an off-host copy.
-* **Sizing:** one VM with 4–8 vCPU and 16 GB RAM covers a few thousand users on EOD data. Measured numbers are in ARCHITECTURE §13.
+Keep both values. **Use the same values in Vercel and GitHub.** The encryption key protects your Upstox token in the database, so if the two places don't match, the daily job can't read the token.
 
-## Kubernetes: `deploy/k8s`
+### 2. Create a Neon database
+1. Create a project on neon.tech (or add **Neon** from Vercel → Storage).
+2. Copy the **pooled** connection string.
+3. Change its start to `postgresql+psycopg://…` and keep `?sslmode=require`. For example:
 
-```sh
-kubectl create namespace marketedge
-kubectl -n marketedge create secret generic marketedge-secrets \
-  --from-literal=DATABASE_URL='postgresql+psycopg://marketedge:…@DB_HOST:5432/marketedge?sslmode=require' \
-  --from-literal=SECRET_KEY="$(openssl rand -hex 32)" \
-  --from-literal=ENCRYPTION_KEY="$(python3 -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())')" \
-  --from-literal=METRICS_TOKEN="$(openssl rand -hex 24)" \
-  --from-literal=PGPASSWORD='…'
-# edit deploy/k8s/overlays/production/kustomization.yaml: registry, tag, hostname
-kubectl apply -k deploy/k8s/overlays/production
-kubectl -n marketedge wait --for=condition=complete job/migrate --timeout=5m
+   `postgresql+psycopg://USER:PASSWORD@ep-xxx-pooler.REGION.aws.neon.tech/neondb?sslmode=require`
+
+## Step 1: GitHub secrets
+In the repo, go to Settings → Secrets and variables → Actions.
+
+| Secret | Value |
+|---|---|
+| `DATABASE_URL` | the Neon connection string from above |
+| `SECRET_KEY` | from step 1 |
+| `ENCRYPTION_KEY` | from step 1 |
+| `BOOTSTRAP_ADMIN_EMAIL` | your login email |
+| `BOOTSTRAP_ADMIN_PASSWORD` | a strong password: at least 10 characters, with upper and lower case, a digit and a symbol |
+
+Optional **Variables** (same page, Variables tab). The defaults already suit Upstox and Binance:
+
+- `PUBLIC_APP_URL`: your website address, used in notification links.
+
+## Step 2: API on Vercel
+1. Vercel → **Add New → Project** → import this repo.
+2. Set **Root Directory** to `backend`. Python is used, and `vercel.json` sends every request to the FastAPI app.
+3. Add these environment variables:
+
+```
+ENVIRONMENT=production
+COOKIE_SECURE=true
+DATABASE_URL=<Neon pooled URL>
+DB_NULL_POOL=true
+SECRET_KEY=<same as GitHub>
+ENCRYPTION_KEY=<same as GitHub>
+MARKETS_ENABLED=NSE,CRYPTO
+MARKET_DATA_PROVIDER=upstox
+OPTIONS_DATA_PROVIDER=upstox
+CRYPTO_DATA_PROVIDER=binance
+BENCHMARK_SYMBOL=NIFTY50
+VIX_SYMBOL=INDIAVIX
+OPTIONS_UNDERLYING=NIFTY50
+OPTIONS_DISPLAY_NAME=NIFTY 50
+BENCHMARK_CRYPTO=BTCUSDT
+ALLOW_REGISTRATION=false
+JOB_RUNNER=github
+GITHUB_REPO=<owner>/<repo>
+GITHUB_DISPATCH_TOKEN=<fine-grained token, see below>
+CORS_ORIGINS=https://<your-website>.vercel.app
+PUBLIC_APP_URL=https://<your-website>.vercel.app
+UPSTOX_REDIRECT_URI=https://<your-website>.vercel.app/api/v1/upstox/callback
 ```
 
-The base contains:
+4. Deploy, then note the API's address, for example `https://marketedge-api.vercel.app`.
 
-**Workloads:**
-* `api`: 2–8 replicas behind an HPA at 70% CPU, with a PDB. Probes: `/ready` for readiness, `/health` for liveness and startup. It does **not** migrate on start.
-* `migrate`: a Job that runs `alembic upgrade head`. Run it before each rollout; it is an Argo CD PreSync hook, or CI deletes and re-applies it.
-* `worker`, `worker-scans`, `worker-backtests`: one Deployment per Celery queue (see OPERATIONS). They have long termination grace periods so running tasks can finish; `acks_late` plus `reject_on_worker_lost` redelivers anything interrupted.
-* `beat`: 1 replica with the `Recreate` strategy, so there is never a second scheduler.
-* `frontend`: 2–6 replicas behind an HPA, with a PDB.
-* `redis`: in-cluster, with no persistence needed. To use a managed Redis instead, delete it from the kustomization and set `REDIS_URL` (`rediss://` for TLS).
-* `db-backup`: a nightly CronJob running `pg_dump` to a PVC.
+**`GITHUB_DISPATCH_TOKEN`** is what the app's Admin → Jobs → "Run now" button uses to start the daily workflow. To create it:
 
-**Networking:**
-* **Ingress:** cert-manager TLS (ClusterIssuer `letsencrypt`). Only the **frontend** is exposed; it proxies `/api/v1/*` to the internal API Service, so `/metrics` is never public.
-* **NetworkPolicies:** default-deny, then:
-  * ingress-controller → frontend → api;
-  * `monitoring` namespace → api;
-  * backend pods → redis, Postgres (private CIDRs, port 5432) and HTTPS/SMTP egress.
+1. Go to GitHub → Settings → Developer settings → Fine-grained tokens.
+2. Limit it to **only this repository**.
+3. Give it the permission **Actions: Read and write**.
 
-**Hardening:**
-* The namespace enforces Pod Security `restricted`.
-* Every pod runs as non-root with a RuntimeDefault seccomp profile.
-* Every container has a read-only root filesystem, all capabilities dropped and no privilege escalation.
-* ServiceAccount tokens are not mounted.
-* `/tmp` is an emptyDir.
-* Secrets are mounted as files at `/run/secrets` (mode 0400) and read through `*_FILE`.
+It's optional. Without it, the schedule still runs; only the button can't start it.
 
-**Storage.** The `marketdata` PVC (licensed CSV drops) is shared by the API and workers, so it needs a **ReadWriteMany** storage class. Remove it if you use API-based providers only.
+## Step 3: Website on Vercel
+1. Vercel → **Add New → Project** → import the **same** repo again.
+2. Set **Root Directory** to `frontend`. Next.js is detected.
+3. Add the environment variable `API_URL=https://<your-api>.vercel.app`. It's used when the site is built.
+4. Deploy. This address is your app. If it differs from what you set in step 2, update `CORS_ORIGINS`, `PUBLIC_APP_URL` and `UPSTOX_REDIRECT_URI` in the API project and redeploy it.
 
-### AWS mapping
+## Step 4: First run (creates the tables, your admin account and the data)
+1. GitHub → **Actions** → **daily** → **Run workflow**, with market **CRYPTO** and full **true**. Binance data needs no key, and this first run also creates the database tables and your admin account. It takes about 5 minutes.
+2. Sign in to the website with your bootstrap email and password.
+3. Go to **Admin → Providers → Upstox** and paste your **analytics token**. It is checked with Upstox and stored encrypted in Neon.
+4. Run the workflow again with market **NSE** and full **true** (about 10 minutes). The token is needed to pick the 300 most-traded stocks and to read the NIFTY option chain.
 
-| Piece | AWS |
-|---|---|
-| Kubernetes | EKS (managed node groups; Karpenter for worker nodes) |
-| Postgres | RDS for PostgreSQL 16, Multi-AZ, PITR on, `sslmode=require` |
-| Redis | ElastiCache for Redis (TLS → `rediss://`), or keep in-cluster |
-| Ingress / TLS | AWS Load Balancer Controller: set `ingressClassName: alb`, the `alb.ingress.kubernetes.io/*` annotations and ACM certificate ARNs instead of cert-manager |
-| Secrets | Secrets Manager via External Secrets Operator → `marketedge-secrets` |
-| RWX volume | EFS CSI driver |
-| Backups off-site | `BACKUP_UPLOAD_CMD='aws s3 cp "$1" s3://bucket/marketedge/'` (IRSA role; bucket versioning + lifecycle) |
-| Registry | ECR |
-| Logs / metrics | CloudWatch Container Insights, or Amazon Managed Prometheus + Grafana |
-| Edge | AWS WAF on the ALB (rate-based and managed rule groups) |
+After that, everything is automatic. The website shows Today's trade ideas after each run, and the daily message arrives in the app's notification bell.
 
-### Azure mapping
-
-| Piece | Azure |
-|---|---|
-| Kubernetes | AKS (a user node pool for workers) |
-| Postgres | Azure Database for PostgreSQL Flexible Server, zone-redundant HA, PITR |
-| Redis | Azure Cache for Redis (TLS, port 6380 → `rediss://…:6380/0`) |
-| Ingress / TLS | Application Gateway for Containers or ingress-nginx + cert-manager (as shipped) |
-| Secrets | Key Vault via the Secrets Store CSI driver (sync to `marketedge-secrets`) or External Secrets |
-| RWX volume | Azure Files (`azurefile-csi`) |
-| Backups off-site | `BACKUP_UPLOAD_CMD='az storage blob upload --auth-mode login -c backups -f "$1" -n "$(basename "$1")"'` (workload identity) |
-| Registry | ACR |
-| Logs / metrics | Azure Monitor managed Prometheus + Managed Grafana, Container Insights |
-| Edge | Front Door / App Gateway WAF |
-
-## CI/CD: `.github/workflows/ci.yml`
-
-The pipeline runs on every pull request and every push to `main`.
-
-**Backend:**
-* ruff lint;
-* Alembic upgrade → downgrade → upgrade against a real Postgres 16 service;
-* the pytest suite, including the parallel-equals-serial check with real `fork` on Linux;
-* bandit;
-* pip-audit.
-
-**Frontend:**
-* `tsc`;
-* ESLint;
-* production build;
-* `npm audit --audit-level=high`.
-
-**Manifests:**
-* `kubectl kustomize` render;
-* `docker compose config` for both compose files.
-
-**Images:** built with Buildx and a GitHub Actions cache. Both images are scanned with Trivy, and the job fails on fixable CRITICAL/HIGH findings. On `main`, both images are pushed to GHCR, tagged with the commit SHA.
-
-Production images contain no pip, setuptools, wheel or npm, so you cannot `pip install` inside a production container. For debugging, use the dev compose (built with `DEV_TOOLS=true`) or a debug sidecar.
-
-Deployment itself is deliberately left out: pick Argo CD/Flux (GitOps on the overlay) or add a `kubectl apply -k` job with environment protection rules.
+## Notes and limits
+- **Upstox data:** the analytics token is read-only, valid for a year and personal-use. Keep sign-up closed (`ALLOW_REGISTRATION=false`) so nobody else can see your data. Don't click "Generate Token" again unless you intend to replace it, because that revokes the old one.
+- **NSE pool:** 300 stocks, chosen by traded value. A stock that later enters the top 300 is added; stocks already in the pool are never dropped. Set `UPSTOX_UNIVERSE_SIZE` to change the size.
+- **Crypto:** today's top 40 coins only. The survivorship-free 678-coin pool (`BINANCE_PIT_UNIVERSE=true`) needs about 10× the database space.
+- **Alerts:** price alerts are checked once a day, after each market's run, not every 5 minutes.
+- **Telegram:** set the webhook to `https://<your-website>/api/v1/notifications/telegram/webhook`. There's no polling on serverless.
+- **Local development:** `docker compose up --build` gives you postgres, the API and the website, with sample data. Jobs run from Admin → Jobs.

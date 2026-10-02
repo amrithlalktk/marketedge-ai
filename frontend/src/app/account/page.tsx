@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AnalystHistory } from "@/components/AnalystPanel";
 import { NotificationSettingsPanel } from "@/components/NotificationSettings";
 import { Card, Disclaimer, InlineError, PageHeader, Pill } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -20,7 +19,7 @@ function Qr({ uri }: { uri: string }) {
 }
 
 export default function AccountPage() {
-  const { user, reloadUser, logout, can } = useAuth();
+  const { user, reloadUser, logout } = useAuth();
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
   const [pw, setPw] = useState("");
@@ -93,11 +92,6 @@ export default function AccountPage() {
         </Card>
       </div>
       <div className="mt-4"><NotificationSettingsPanel /></div>
-      {can("analyst:ask") && (
-        <div className="mt-4">
-          <Card title="AI analyst — your recent questions"><AnalystHistory /></Card>
-        </div>
-      )}
       <Disclaimer />
     </>
   );

@@ -1,8 +1,6 @@
 #!/bin/sh
-# API entrypoint. RUN_MIGRATIONS=false when migrations run as a separate job (Kubernetes).
+# Local/Docker API entrypoint. RUN_MIGRATIONS=false to skip migrations.
 set -eu
-export PROMETHEUS_MULTIPROC_DIR="${PROMETHEUS_MULTIPROC_DIR:-/tmp/prometheus}"
-rm -rf "$PROMETHEUS_MULTIPROC_DIR" && mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
 if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
   alembic upgrade head
 fi

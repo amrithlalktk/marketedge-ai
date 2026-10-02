@@ -1,13 +1,11 @@
-"""Operational CLI.
+"""Operational CLI (the GitHub Actions schedule runs `daily`).
 
+    python -m app.cli daily NSE|CRYPTO [--full]   # the end-of-day pipeline: ingest → scan → (NSE) options + daily ideas message
     python -m app.cli create-admin EMAIL PASSWORD
     python -m app.cli ingest [--market NSE] [--full]
     python -m app.cli scan [--market NSE]
-    python -m app.cli options               # ingest the option chain + run NIFTY options analysis
-    python -m app.cli news [--market NSE]   # fetch news + classify sentiment
-    python -m app.cli calendar              # earnings + economic calendars
-    python -m app.cli ml-train [--market NSE]  # train + walk-forward-validate an ML candidate (activation is an admin decision)
-    python -m app.cli bootstrap-sample      # seed roles, ingest SAMPLE data for every market, scan everything
+    python -m app.cli options                    # option chain + NIFTY options analysis
+    python -m app.cli bootstrap-sample           # SAMPLE data for NSE + CRYPTO, then scan (development)
 """
 from __future__ import annotations
 
@@ -39,9 +37,21 @@ def ensure_admin(db: Session, email: str, password: str) -> User:
     return user
 
 
+def ensure_daily_ideas_alert(db: Session, user: User) -> None:
+    """The admin gets the daily trade-ideas message by default (one per session; editable in Alerts)."""
+    from app.models import Alert
+
+    if not db.scalar(select(Alert).where(Alert.user_id == user.id, Alert.kind == "daily_ideas")):
+        db.add(Alert(user_id=user.id, kind="daily_ideas", params={}, repeat=True, channels=[], note=""))
+        db.commit()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="marketedge")
     sub = p.add_subparsers(dest="cmd", required=True)
+    d = sub.add_parser("daily")
+    d.add_argument("market", choices=["NSE", "CRYPTO"])
+    d.add_argument("--full", action="store_true")
     a = sub.add_parser("create-admin")
     a.add_argument("email")
     a.add_argument("password")
@@ -51,70 +61,42 @@ def main() -> None:
     sc = sub.add_parser("scan")
     sc.add_argument("--market", default="NSE")
     sub.add_parser("options")
-    nw = sub.add_parser("news")
-    nw.add_argument("--market", default="NSE")
-    sub.add_parser("calendar")
-    mt = sub.add_parser("ml-train")
-    mt.add_argument("--market", default="NSE")
     sub.add_parser("bootstrap-sample")
     args = p.parse_args()
 
+    from app import jobs
     from app.core.markets import enabled_markets
-    from app.providers.registry import market_provider
-    from app.services.events_service import ingest_calendar, ingest_news
-    from app.services.market_data import ingest
-    from app.services.options_service import ingest_chain, run_options
-    from app.services.scan_service import run_scan
 
     db = SessionLocal()
     try:
         seed_rbac(db)
         s = get_settings()
-        if args.cmd == "create-admin":
+        if s.bootstrap_admin_email and s.bootstrap_admin_password:
+            ensure_daily_ideas_alert(db, ensure_admin(db, s.bootstrap_admin_email, s.bootstrap_admin_password))
+        if args.cmd == "daily":
+            out = jobs.daily(db, args.market, full=args.full)
+            print(json.dumps(out, indent=2, default=str))
+            failed = [k for k, v in out.items() if v == "failed"]
+            if failed:
+                raise SystemExit(f"steps failed: {failed} (see the jobs table / Admin → Jobs)")
+        elif args.cmd == "create-admin":
             ensure_admin(db, args.email, args.password)
             print(f"admin ready: {args.email}")
         elif args.cmd == "ingest":
-            print(json.dumps(ingest(db, market_provider(market=args.market), args.market, full=args.full), indent=2))
+            print(json.dumps(jobs.ingest(db, args.market, full=args.full), indent=2, default=str))
         elif args.cmd == "scan":
-            run = run_scan(db, args.market)
-            print(json.dumps({"scan_run_id": run.id, **run.stats}, indent=2, default=str))
-        elif args.cmd == "news":
-            print(json.dumps(ingest_news(db, args.market), default=str))
-        elif args.cmd == "calendar":
-            print(json.dumps(ingest_calendar(db, enabled_markets()), default=str))
-        elif args.cmd == "ml-train":
-            from app.services.ml_service import train
-
-            m = train(db, args.market)
-            print(json.dumps({"model_id": m.id, "version": m.version, "algo": m.algo, "eligible": m.eligible, "gate": m.metrics["gate"],
-                              "oos": (m.metrics["results"][m.algo]["oos"] or {}).get("model"),
-                              "baseline": (m.metrics["results"][m.algo]["oos"] or {}).get("baseline")}, indent=2, default=str))
+            print(json.dumps(jobs.scan(db, args.market), indent=2, default=str))
         elif args.cmd == "options":
-            print(json.dumps(ingest_chain(db), indent=2, default=str))
-            run = run_options(db)
-            print(json.dumps({"scan_run_id": run.id, **run.stats}, indent=2, default=str))
+            print(json.dumps(jobs.options(db), indent=2, default=str))
         elif args.cmd == "bootstrap-sample":
             if s.market_data_provider != "sample":
                 raise SystemExit("bootstrap-sample requires MARKET_DATA_PROVIDER=sample")
-            markets = enabled_markets()
-            # FX first so every other market can convert to INR; NSE instruments before the calendar/news that reference them
-            order = [m for m in ["FX", "NSE", "CRYPTO", "US", "EUROPE", "ASIA"] if m in markets]
-            for m in order:
+            for m in enabled_markets():
                 print(f"Ingesting SAMPLE {m} data…")
-                print(json.dumps(ingest(db, market_provider(market=m), m, full=True), default=str))
-            print("Ingesting SAMPLE calendars and news…")
-            print(json.dumps(ingest_calendar(db, markets), default=str))
-            for m in order:
-                print(json.dumps(ingest_news(db, m), default=str))
-            for m in order:
-                run = run_scan(db, m)
-                print(json.dumps({"market": m, "scan_run_id": run.id, "valid": run.stats.get("valid"), "no_trade": run.stats.get("no_trade"),
-                                  "events": run.stats.get("events")}, default=str))
-            if "NSE" in markets:
-                print("Ingesting SAMPLE option chain and running options analysis…")
-                print(json.dumps(ingest_chain(db), default=str))
-                run = run_options(db)
-                print(json.dumps({"scan_run_id": run.id, **run.stats}, indent=2, default=str))
+                print(json.dumps(jobs.ingest(db, m, full=True), default=str))
+                print(json.dumps({"market": m, **jobs.scan(db, m)}, default=str))
+            if "NSE" in enabled_markets():
+                print(json.dumps(jobs.options(db), indent=2, default=str))
     finally:
         db.close()
 

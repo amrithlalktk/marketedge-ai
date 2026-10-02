@@ -392,16 +392,15 @@ def test_sample_data_is_prefix_stable():
     """A later 'today' only appends bars: incremental ingestion never rewrites synthetic history."""
     from datetime import date
 
-    from app.providers import sample_global
+    from app.providers import sample_crypto
     from app.providers.sample import SampleUniverse
 
     a, b = SampleUniverse(n_stocks=5, today=date(2026, 9, 29)), SampleUniverse(n_stocks=5, today=date(2026, 10, 2))
     for sym in ("DEMO_001", "DEMO_NIFTY50"):
         old, new = a.bars[sym], b.bars[sym]
         assert len(new) == len(old) + 3 and (new.loc[old.index] == old).all().all()
-    for m in ("CRYPTO", "FX"):
-        x, y = sample_global.build(m, date(2026, 9, 29)), sample_global.build(m, date(2026, 10, 2))
-        assert all((y.bars[k].loc[x.bars[k].index] == x.bars[k]).all().all() for k in x.bars)
+    x, y = sample_crypto.build("CRYPTO", date(2026, 9, 29)), sample_crypto.build("CRYPTO", date(2026, 10, 2))
+    assert all((y.bars[k].loc[x.bars[k].index] == x.bars[k]).all().all() for k in x.bars)
 
 
 def test_daily_ideas_digest_once_per_session(app_client, admin_headers, scanned):

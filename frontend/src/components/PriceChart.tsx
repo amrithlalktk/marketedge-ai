@@ -48,7 +48,7 @@ function line(t: string[], vals: Num[], color?: (i: number) => string | undefine
 const UP = "#22c55e";
 const DOWN = "#f05252";
 
-export function PriceChart({ candles, enabled, trade, height = 420, fx = false }: { candles: Candles; enabled: Set<IndicatorKey>; trade?: TradeLines; height?: number; fx?: boolean }) {
+export function PriceChart({ candles, enabled, trade, height = 420 }: { candles: Candles; enabled: Set<IndicatorKey>; trade?: TradeLines; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const on = [...enabled].sort().join(",");
 
@@ -76,7 +76,7 @@ export function PriceChart({ candles, enabled, trade, height = 420, fx = false }
 
       const lastC = [...c].reverse().find((x) => x != null && x !== 0) ?? 1;
       const dec = (candles.bars as unknown as { price_decimals?: number }).price_decimals;
-      const digits = typeof dec === "number" && dec >= 0 && dec <= 12 ? dec : pxDigits(lastC, fx);
+      const digits = typeof dec === "number" && dec >= 0 && dec <= 12 ? dec : pxDigits(lastC);
       const pf = { type: "price" as const, precision: digits, minMove: Math.pow(10, -digits) };
       const price: ISeriesApi<"Candlestick"> = chart.addSeries(lc.CandlestickSeries, {
         priceFormat: pf,
@@ -167,7 +167,7 @@ export function PriceChart({ candles, enabled, trade, height = 420, fx = false }
       chart = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, on, fx, trade?.stop, trade?.entry?.[0], trade?.entry?.[1], trade?.targets?.[0], trade?.targets?.[1]]);
+  }, [candles, on, trade?.stop, trade?.entry?.[0], trade?.entry?.[1], trade?.targets?.[0], trade?.targets?.[1]]);
 
   const extra = (enabled.has("rsi") ? 110 : 0) + (enabled.has("macd") ? 110 : 0);
   return <div ref={ref} style={{ height: height + extra }} className="w-full overflow-hidden rounded-md border border-edge" role="img" aria-label={`Candlestick chart for ${candles.symbol} (${candles.interval})`} />;

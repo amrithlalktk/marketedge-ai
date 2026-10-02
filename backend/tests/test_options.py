@@ -256,21 +256,6 @@ def test_payoff_builder(app_client, admin_headers, options_ready):
     assert bad.status_code == 422
 
 
-def test_csv_options_provider(tmp_path):
-    from app.providers.csv_provider import CsvMarketDataProvider, CsvOptionsProvider
-
-    (tmp_path / "ohlcv").mkdir()
-    (tmp_path / "ohlcv" / "NIFTY50.csv").write_text("date,open,high,low,close,volume\n2026-09-28,25000,25100,24900,25050,0\n2026-09-29,25050,25200,25000,25150,0\n")
-    od = tmp_path / "options" / "NIFTY50"
-    od.mkdir(parents=True)
-    (od / "meta.csv").write_text("lot_size,spot_symbol\n75,NIFTY50\n")
-    (od / "2026-09-29.csv").write_text("expiry,strike,option_type,bid,ask,ltp,volume,oi,oi_change,iv\n"
-                                       "2026-10-06,25100,CE,180,181,180.5,1000,5000,100,14.5\n2026-10-06,25100,PE,130,131,130.5,900,6000,-50,15.1\n")
-    snap = CsvOptionsProvider(str(tmp_path), CsvMarketDataProvider(str(tmp_path))).get_option_chain("NIFTY50")
-    assert snap.spot == 25150 and snap.lot_size == 75 and snap.as_of.date() == date(2026, 9, 29) and not snap.meta.is_sample
-    assert snap.chain["iv"].tolist() == [pytest.approx(0.145), pytest.approx(0.151)]
-    with pytest.raises(ValueError):
-        CsvOptionsProvider(str(tmp_path), CsvMarketDataProvider(str(tmp_path))).get_option_chain("../etc")
 
 
 def test_payoff_curve_keeps_strike_kinks():

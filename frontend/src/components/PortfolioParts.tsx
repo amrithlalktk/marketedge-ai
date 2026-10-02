@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { dateTime, inr, integer, moveClass, num, price } from "@/lib/format";
+import { ApiError, api } from "@/lib/api";
+import { dateTime, integer, money, moveClass, num, price } from "@/lib/format";
 import type { Direction, PaperPortfolio, PaperTrade, StockDetail } from "@/lib/types";
 import { InstrumentSearch } from "./InstrumentSearch";
 import { Card, Confirm, DirectionBadge, Field, InlineError, Pill, Segmented, cx } from "./ui";
 
-const fxOf = (t: { market?: string }) => t.market === "FX";
-export const tp = (v: number | null | undefined, t: { currency?: string | null; market?: string }) => price(v, t.currency ?? "INR", { fx: fxOf(t) });
+export const tp = (v: number | null | undefined, t: { currency?: string | null; market?: string }) => price(v, t.currency ?? "INR");
+
+/** Error text for a refused trade; 422 = the portfolio refused it (e.g. a USD crypto trade in an INR portfolio). */
+export const refusal = (x: unknown, fallback: string) =>
+  x instanceof ApiError && x.status === 422 ? `Refused: ${x.message}` : x instanceof Error ? x.message : fallback;
 
 const STATUS_TONE: Record<string, "green" | "amber" | "slate" | "red" | "blue"> = { open: "green", pending: "amber", closed: "slate", cancelled: "red" };
 
@@ -40,7 +43,7 @@ function LevelEdit({ label, value, onSave, t, cls }: { label: string; value: num
   );
 }
 
-export function TradeCard({ t, pid, journal, onChanged }: { t: PaperTrade; pid: number; journal: boolean; onChanged: (msg?: string) => void }) {
+export function TradeCard({ t, pid, base = "INR", journal, onChanged }: { t: PaperTrade; pid: number; base?: string; journal: boolean; onChanged: (msg?: string) => void }) {
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const active = t.status === "open" || t.status === "pending";
@@ -74,8 +77,8 @@ export function TradeCard({ t, pid, journal, onChanged }: { t: PaperTrade; pid: 
         <div className="text-right">
           {t.status !== "pending" && t.status !== "cancelled" && (
             <>
-              <div className={cx("num text-sm font-semibold", moveClass(pnlBase))}>{inr(pnlBase, 0)}</div>
-              <div className="text-[10px] text-muted">{t.status === "closed" ? "realised" : "unrealised"}{t.currency !== "INR" && <> · <span className={moveClass(pnlCcy)}>{tp(pnlCcy, t)}</span> in {t.currency}</>}</div>
+              <div className={cx("num text-sm font-semibold", moveClass(pnlBase))}>{money(pnlBase, base, 0)}</div>
+              <div className="text-[10px] text-muted">{t.status === "closed" ? "realised" : "unrealised"}{t.currency !== base && <> · <span className={moveClass(pnlCcy)}>{tp(pnlCcy, t)}</span> in {t.currency}</>}</div>
             </>
           )}
         </div>
@@ -151,8 +154,8 @@ export function OrderForm({ p, onPlaced }: { p: PaperPortfolio; onPlaced: (msg: 
   const problems = levelProblems(dir, ref, n(stop), n(t1), n(t2));
   const risk = ref != null && n(stop) != null && n(qty) ? Math.abs(ref - (n(stop) as number)) * (n(qty) as number) : null;
   const ccy = inst?.currency ?? "INR";
-  const riskPctEquity = risk != null && ccy === "INR" ? (100 * risk) / p.analytics.equity : null;
-  const sized = ccy === "INR" && ref != null && n(stop) != null && Math.abs(ref - (n(stop) as number)) > 0 ? Math.floor((0.01 * p.analytics.equity) / Math.abs(ref - (n(stop) as number))) : null;
+  const riskPctEquity = risk != null && ccy === p.base_currency ? (100 * risk) / p.analytics.equity : null;
+  const sized = ccy === p.base_currency && ref != null && n(stop) != null && Math.abs(ref - (n(stop) as number)) > 0 ? Math.floor((0.01 * p.analytics.equity) / Math.abs(ref - (n(stop) as number))) : null;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,7 +173,7 @@ export function OrderForm({ p, onPlaced }: { p: PaperPortfolio; onPlaced: (msg: 
       });
       onPlaced(`Order #${r.trade_id} ${r.status}. ${r.note}`);
       setQty(""); setNotes("");
-    } catch (x) { setErr(x instanceof Error ? x.message : "Order rejected"); } finally { setBusy(false); }
+    } catch (x) { setErr(refusal(x, "Order rejected")); } finally { setBusy(false); }
   };
 
   return (
@@ -233,7 +236,7 @@ export function JournalForm({ p, onAdded }: { p: PaperPortfolio; onAdded: (msg: 
       });
       onAdded(`Journal trade #${r.trade_id} recorded (${r.status}).`);
       setF((p0) => ({ ...p0, qty: "", entry: "", exit: "", exitAt: "", notes: "" }));
-    } catch (x) { setErr(x instanceof Error ? x.message : "Could not record"); } finally { setBusy(false); }
+    } catch (x) { setErr(refusal(x, "Could not record")); } finally { setBusy(false); }
   };
   return (
     <Card title="Record a trade (journal)">

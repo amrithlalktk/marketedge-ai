@@ -1,7 +1,5 @@
 "use client";
 
-import { featureOn } from "@/lib/market";
-
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { PositionSizer } from "@/components/PositionSizer";
@@ -9,12 +7,9 @@ import { ScoreBadge } from "@/components/SetupCard";
 import { ChecksPanel, ExamplesTable, GeneratedStamp, LevelsPanel, MtfPanel, ProbabilityPanel, ScoreBreakdown, WhyPanel } from "@/components/SetupSections";
 import { Card, Collapsible, DataStamp, DirectionBadge, Disclaimer, ErrorState, Loading, Pill, Stat, StatusBadge, UpgradeNote } from "@/components/ui";
 import { api } from "@/lib/api";
-import { isFx, moveClass, pct, price, rr, signedPct } from "@/lib/format";
+import { moveClass, pct, price, rr, signedPct } from "@/lib/format";
 import { marketLabel } from "@/lib/market";
-import { DerivativesPanel, InrPanel, PipsPanel } from "@/components/MarketBlocks";
-import { EventRiskBlock, NewsFlowBlock } from "@/components/NewsEvents";
-import { AnalystPanel } from "@/components/AnalystPanel";
-import { MlPanel } from "@/components/MlBlocks";
+import { DerivativesPanel, InrPanel } from "@/components/MarketBlocks";
 import { SetupActions } from "@/components/SetupActions";
 import { useApi } from "@/lib/useApi";
 
@@ -27,7 +22,7 @@ export default function SetupDetailPage() {
   if (q.loading || !q.data) return <Loading label="Loading setup…" />;
   const s = q.data;
   const blocking = s.checks.filter((c) => !c.passed && c.severity === "block");
-  const o = { fx: isFx(s.market), ref: s.current_price };
+  const o = { ref: s.current_price };
 
   return (
     <>
@@ -81,17 +76,10 @@ export default function SetupDetailPage() {
         <p className="mt-3 text-xs"><Link href={`/stocks/${encodeURIComponent(s.symbol)}`} className="link">Open chart & full analysis for {s.symbol} →</Link></p>
       </header>
 
-      {(s.inr || s.pips || s.derivatives) && (
+      {(s.inr || s.derivatives) && (
         <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {s.inr && <InrPanel i={s.inr} currency={s.currency} />}
-          {s.pips && <PipsPanel p={s.pips} />}
-          {s.derivatives && <div className={s.inr && !s.pips ? "" : "lg:col-span-2"}><DerivativesPanel d={s.derivatives} marketCap={s.market_cap_usd} spreadBps={s.spread_bps} exchange={s.exchange} /></div>}
-        </div>
-      )}
-      {(s.events || s.news) && (
-        <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {s.events && featureOn("calendar") && <EventRiskBlock ev={s.events} checks={s.checks} />}
-          {s.news && featureOn("news") && <NewsFlowBlock n={s.news} />}
+          {s.derivatives && <div className={s.inr ? "" : "lg:col-span-2"}><DerivativesPanel d={s.derivatives} marketCap={s.market_cap_usd} spreadBps={s.spread_bps} exchange={s.exchange} /></div>}
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -100,10 +88,7 @@ export default function SetupDetailPage() {
       </div>
       <div className="mt-4"><WhyPanel e={s.explanation} /></div>
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="space-y-4">
         <ProbabilityPanel p={s.probability} strategyRules={{ entry: s.strategy.entry_rule, exit: `${s.strategy.stop_rule} ${s.strategy.target_rule} Time exit after ${s.strategy.max_hold_bars} bars.` }} />
-        {featureOn("ml") && <MlPanel ml={s.ml} />}
-        </div>
         <ChecksPanel checks={s.checks} />
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -115,11 +100,10 @@ export default function SetupDetailPage() {
           </Card>
         )}
       </div>
-      <div className="mt-4"><ExamplesTable rows={s.historical_examples} currency={s.currency} fx={o.fx} /></div>
+      <div className="mt-4"><ExamplesTable rows={s.historical_examples} currency={s.currency} /></div>
       <p className="mt-2 text-[11px] text-muted">{s.explanation.historical_basis}</p>
 
       <div className="mt-4"><SetupActions s={s} signalId={s.id ?? Number(id)} /></div>
-      {featureOn("analyst") && <div className="mt-4"><AnalystPanel signalId={s.id ?? Number(id)} /></div>}
       <div className="mt-4 space-y-3">
         <Collapsible title="Position-size quick calc" defaultOpen>
           <PositionSizer entry={s.current_price} stop={s.stop} atr={s.atr} direction={s.direction} compact={false} currency={s.currency} />

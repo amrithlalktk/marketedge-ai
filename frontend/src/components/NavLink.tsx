@@ -5,7 +5,7 @@ import { Suspense, type ComponentProps } from "react";
 import { useMarket, withMarket } from "@/lib/market";
 
 /** Pages that follow the global market selection. */
-const MARKET_PAGES = new Set(["/", "/setups", "/stocks", "/analytics", "/backtest"]);
+const MARKET_PAGES = new Set(["/", "/setups", "/stocks"]);
 
 function Inner({ href, ...rest }: ComponentProps<typeof Link> & { href: string }) {
   const [market] = useMarket();

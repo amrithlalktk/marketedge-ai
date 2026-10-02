@@ -6,3 +6,5 @@ dev.db
 *.db
 .env
 .ruff_cache
+api/
+vercel.json

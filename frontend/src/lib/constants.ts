@@ -16,11 +16,12 @@ export const COMPONENT_LABELS: Record<string, string> = {
   regime: "Regime",
   risk_reward: "Risk-reward",
   historical: "Historical evidence",
-  ml: "ML estimate",
 };
 
 /** Components that are displayed for context and only affect the score if an admin gives them weight. */
-export const CONTEXT_COMPONENTS = ["historical", "ml"];
+export const CONTEXT_COMPONENTS = ["historical"];
+/** Score components the lite backend still reports (always empty) but that have no feature behind them any more. */
+export const RETIRED_COMPONENTS = ["ml"];
 
 export const SORT_OPTIONS = [
   { value: "score", label: "Score" },

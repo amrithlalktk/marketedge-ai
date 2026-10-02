@@ -48,14 +48,16 @@ def sync_instruments(db: Session, provider: MarketDataProvider, market: str) -> 
         row.lot_size, row.is_index, row.is_sample = ins.lot_size, ins.is_index, ins.is_sample or provider.is_sample
         row.listed_on = date.fromisoformat(ins.listed_on) if ins.listed_on else None
         row.delisted_on = date.fromisoformat(ins.delisted_on) if ins.delisted_on else None
-        row.is_active = True
+        row.is_active = not (row.meta or {}).get("parked", False)  # parked = outside a size-capped pool (see ingest)
         if row.id is None:
             db.add(row)
         existing[ins.symbol] = row
     # Never mix SAMPLE and real data in one market: when a market switches provider kind
     # (sample ↔ live), instruments of the other kind are deactivated (kept, not deleted — switching
     # back reactivates them via the loop above).
-    rejected = getattr(provider, "rejected", set())  # e.g. stablecoins the provider filters out
+    rejected = set(getattr(provider, "rejected", set()))  # e.g. stablecoins the provider filters out
+    if getattr(provider, "pit_universe", None) is False:  # archive-only (delisted) coins exist only in the full-pool mode
+        rejected |= {k for k, v in existing.items() if v.market == market and (v.meta or {}).get("status") == "delisted"}
     for row in existing.values():
         if row.market == market and row.is_active and (bool(row.is_sample) != bool(provider.is_sample) or row.symbol in rejected):
             row.is_active = False
@@ -79,6 +81,9 @@ def ingest(db: Session, provider: MarketDataProvider, market: str, symbols: Opti
     # delisted history is final: nothing more to fetch (unless the provider still lists it, e.g. Binance archive pairs)
     in_market = {k: v for k, v in instruments.items() if v.market == market and v.is_active
                  and (v.delisted_on is None or not getattr(provider, "lists_full_universe", False))}
+    cap = getattr(provider, "pool_cap", None)  # providers that can rank by traded value (Upstox) and are size-capped
+    if cap and not symbols:
+        in_market = _cap_pool(db, provider, market, instruments, cap)
     targets = [in_market[s] for s in (symbols or in_market.keys()) if s in in_market]
     stats = {"instruments": len(targets), "bars": 0, "errors": {}}
     if hasattr(provider, "prefetch") and interval == "1d":
@@ -93,6 +98,8 @@ def ingest(db: Session, provider: MarketDataProvider, market: str, symbols: Opti
             start = (status.last_bar_ts - timedelta(days=7)).date()  # small overlap re-writes revised bars
         try:
             df, meta = provider.get_ohlcv(ins.symbol, interval, start=start)
+        except NotImplementedError:
+            raise  # the provider has no such interval (e.g. intraday): the caller decides, no per-symbol error
         except Exception as exc:
             log.exception("ingest failed for %s", ins.symbol)
             stats["errors"][ins.symbol] = str(exc)[:300]
@@ -118,6 +125,26 @@ def ingest(db: Session, provider: MarketDataProvider, market: str, symbols: Opti
             except Exception as exc:  # context data only; never fail ingestion for it
                 log.warning("derivatives for %s failed: %s", ins.symbol, exc)
     return stats
+
+
+def _cap_pool(db: Session, provider, market: str, instruments: Dict[str, Instrument], cap: int) -> Dict[str, Instrument]:
+    """Size-capped installs (free database tier): store indices + every stock that already has history + the top `cap`
+    stocks by the latest traded value. Others are 'parked' (inactive, kept, never deleted); a stock that later enters the
+    top `cap` is unparked and back-filled, so the stored pool only grows and history stays consistent."""
+    eligible = {k: v for k, v in instruments.items() if v.market == market and v.delisted_on is None
+                and bool(v.is_sample) == bool(provider.is_sample)}
+    have = {iid for (iid,) in db.execute(select(DataStatus.instrument_id).where(DataStatus.interval == "1d"))}
+    stocks = [v for v in eligible.values() if not v.is_index]
+    top = set(provider.rank_by_traded_value([v.symbol for v in stocks])[:cap])
+    pool = {v.symbol for v in stocks if v.id in have} | top
+    if not pool:
+        raise RuntimeError("Could not rank NSE stocks by traded value (Upstox quotes need a valid token). Paste the analytics token first.")
+    for v in stocks:
+        parked = v.symbol not in pool
+        v.meta = {**(v.meta or {}), "parked": parked}
+        v.is_active = not parked
+    db.commit()
+    return {k: v for k, v in eligible.items() if v.is_index or k in pool}
 
 
 def _store_derivatives(db: Session, ins: Instrument, df, source: str) -> int:

@@ -39,22 +39,7 @@ PROFILES: Dict[str, MarketProfile] = {p.id: p for p in [
                   {"min_avg_traded_value": 2e7, "min_price": 0.0, "max_stop_pct": 18.0, "max_staleness_days": 2},
                   CostModel(0.10, 0.05), 365,
                   "SHORT setups require perpetual futures or margin; funding costs are not included in the backtest.", ["BINANCE", "CRYPTO"]),
-    MarketProfile("US", "United States — NYSE / NASDAQ", "GLOBAL", "EQUITY", "weekdays", False, "equity", "USD",
-                  {"min_avg_traded_value": 2e7, "min_price": 5.0}, CostModel(0.02, 0.03), 252,
-                  "SHORT setups require a margin account with borrow available.", ["NYSE", "NASDAQ"]),
-    MarketProfile("EUROPE", "Europe — LSE / XETRA / Euronext", "GLOBAL", "EQUITY", "weekdays", False, "equity", "USD",
-                  {"min_avg_traded_value": 5e6, "min_price": 1.0}, CostModel(0.08, 0.05), 252,
-                  "SHORT setups require a margin account with borrow available; UK stamp duty applies to LSE purchases.", ["LSE", "XETRA", "EURONEXT"]),
-    MarketProfile("ASIA", "Asia — Tokyo / Hong Kong / Singapore / Korea", "GLOBAL", "EQUITY", "weekdays", False, "equity", "USD",
-                  {"min_avg_traded_value": 5e6, "min_price": 0.0}, CostModel(0.10, 0.05), 252,
-                  "Short selling rules differ by exchange (e.g. HKEX designated securities, KRX restrictions).", ["TSE", "HKEX", "SGX", "KRX"]),
-    MarketProfile("FX", "Forex — majors and INR crosses", "FOREX", "FOREX", "weekdays", True, "price_only", "USD",
-                  {"max_stop_pct": 5.0, "min_price": 0.0}, CostModel(0.0, 0.01), 260,
-                  "", ["FX"]),
 ]}
-
-GLOBAL_MARKETS = ("US", "EUROPE", "ASIA")
-
 
 def profile(market: str) -> MarketProfile:
     try:

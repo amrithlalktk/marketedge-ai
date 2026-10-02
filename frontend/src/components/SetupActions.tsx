@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { inr, integer } from "@/lib/format";
+import { money, num } from "@/lib/format";
 import type { PaperPortfolio, SetupDetail } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 import { ChannelPicker } from "./ChannelPicker";
+import { refusal } from "./PortfolioParts";
 import { Card, Field, InlineError, UpgradeNote } from "./ui";
 
 function PaperTrade({ s, signalId }: { s: SetupDetail; signalId: number }) {
@@ -15,9 +16,13 @@ function PaperTrade({ s, signalId }: { s: SetupDetail; signalId: number }) {
   const paper = (pf.data?.items ?? []).filter((p) => p.kind === "paper");
   const [pid, setPid] = useState<string>("");
   const chosen = paper.find((p) => String(p.id) === pid) ?? paper[0];
-  // Default size: risk 1% of portfolio equity (₹) using the INR risk per unit when the instrument is not in INR.
-  const riskUnitInr = s.inr && s.inr.available !== false && s.inr.risk_per_unit_inr ? s.inr.risk_per_unit_inr : s.currency === "INR" ? Math.abs(s.current_price - s.stop) : null;
-  const suggested = chosen && riskUnitInr ? Math.max(0, Math.floor((0.01 * chosen.analytics.equity) / riskUnitInr)) : null;
+  // Default size: risk 1% of portfolio equity, with the risk per unit in the portfolio's base currency.
+  const base = chosen?.base_currency ?? "INR";
+  const riskUnit = s.currency === base ? Math.abs(s.current_price - s.stop)
+    : base === "INR" && s.inr && s.inr.available !== false && s.inr.risk_per_unit_inr ? s.inr.risk_per_unit_inr : null;
+  const rawSize = chosen && riskUnit ? Math.max(0, (0.01 * chosen.analytics.equity) / riskUnit) : null;
+  // whole units for stocks; fractional (4 dp) when one unit is worth more than the risk budget (e.g. BTC)
+  const suggested = rawSize == null ? null : rawSize >= 1 ? Math.floor(rawSize) : Math.floor(rawSize * 1e4) / 1e4;
   const [qty, setQty] = useState<string>("");
   const q = qty || (suggested ? String(suggested) : "");
   const [msg, setMsg] = useState<string | null>(null);
@@ -34,15 +39,15 @@ function PaperTrade({ s, signalId }: { s: SetupDetail; signalId: number }) {
           if (!(Number(q) > 0)) return setErr("Enter a quantity.");
           setBusy(true);
           try { const r = await api.portfolios.fromSetup(chosen!.id, signalId, Number(q)); setMsg(`Order #${r.trade_id} ${r.status} in “${chosen!.name}”. ${r.note}`); }
-          catch (x) { setErr(x instanceof Error ? x.message : "Order rejected"); } finally { setBusy(false); }
+          catch (x) { setErr(refusal(x, "Order rejected")); } finally { setBusy(false); }
         }}>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Portfolio" htmlFor={`pt-p-${signalId}`}>
               <select id={`pt-p-${signalId}`} className="input" value={chosen ? String(chosen.id) : ""} onChange={(e) => { setPid(e.target.value); setQty(""); }}>
-                {paper.map((p) => <option key={p.id} value={p.id}>{p.name} ({inr(p.analytics.equity, 0)})</option>)}
+                {paper.map((p) => <option key={p.id} value={p.id}>{p.name} ({money(p.analytics.equity, p.base_currency, 0)})</option>)}
               </select>
             </Field>
-            <Field label="Quantity" htmlFor={`pt-q-${signalId}`} hint={suggested != null ? `1% risk of equity ≈ ${integer(suggested)} units` : "Enter a size"}>
+            <Field label="Quantity" htmlFor={`pt-q-${signalId}`} hint={suggested != null ? `1% risk of equity ≈ ${num(suggested, suggested % 1 ? 4 : 0)} units` : "Enter a size"}>
               <input id={`pt-q-${signalId}`} className="input num" type="number" min={0} step="any" value={q} onChange={(e) => setQty(e.target.value)} />
             </Field>
           </div>

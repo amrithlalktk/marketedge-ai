@@ -13,7 +13,6 @@ from app.api.deps import require
 from app.core.cache import get_cache
 from app.core.db import get_db
 from app.models import Instrument, MarketRegime, Sector, Signal, SignalOutcome
-from app.providers.registry import fundamental_provider
 from app.services.market_data import data_meta, load_bars
 from app.services.scan_service import _json_safe, latest_events, latest_run
 from app.services.settings_service import engine_config
@@ -41,7 +40,7 @@ def _info(i: Instrument) -> dict:
 @router.get("", dependencies=[Depends(require("analysis:read"))])
 def list_stocks(db: Session = Depends(get_db), q: Optional[str] = Query(None, max_length=64), sector: Optional[str] = None,
                 include_indices: bool = False, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
-                market: Optional[str] = Query(None, pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX)$")):
+                market: Optional[str] = Query(None, pattern="^(NSE|CRYPTO)$")):
     stmt = select(Instrument).where(Instrument.is_active.is_(True))
     if market:
         stmt = stmt.where(Instrument.market == market)
@@ -69,8 +68,7 @@ def stock_detail(symbol: str, db: Session = Depends(get_db)):
                  "change_1w_pct": round(100 * float(c.iloc[-1] / c.iloc[-6] - 1), 2), "volume": float(bars["volume"].iloc[-1]),
                  "high_52w": price_round(float(bars["high"].iloc[-252:].max()), last), "low_52w": price_round(float(bars["low"].iloc[-252:].min()), last),
                  "as_of": str(bars.index[-1].date())}
-    fund = fundamental_provider().get_fundamentals(ins.symbol)
-    return {**_info(ins), "quote": quote, "fundamentals": fund, "fundamentals_available": fund is not None, "data": data_meta(db, ins)}
+    return {**_info(ins), "quote": quote, "fundamentals": None, "fundamentals_available": False, "data": data_meta(db, ins)}
 
 
 INDICATOR_COLS = ["ema20", "ema50", "ema100", "ema200", "sma20", "sma50", "sma200", "vwap20", "bb_upper", "bb_mid", "bb_lower", "rsi",
@@ -116,14 +114,13 @@ def analysis(symbol: str, db: Session = Depends(get_db), mode: str = Query("hybr
     """Evaluates every strategy on the latest bar using precomputed historical events.
     Cheap: single-symbol features + stored events — the expensive universe replay runs in the scan job."""
     from app.core.markets import market_config
-    from engine.strategies import strategy_set
+    from app.services.strategy_service import scan_strategies
 
     ins = _instrument(db, symbol)
     market = ins.market or "NSE"
     prof = market_config(market).profile
     run = latest_run(db, market)
-    # per scan run and calendar day (freshness flags and days-to-earnings are date-dependent)
-    key = f"me:analysis:{ins.symbol}:{mode}:{run.id if run else 0}:{date.today()}"
+    key = f"me:analysis:{ins.symbol}:{mode}:{run.id if run else 0}:{date.today()}"  # per scan run and calendar day
     cached = get_cache().get_json(key)
     if cached:
         return cached
@@ -134,43 +131,19 @@ def analysis(symbol: str, db: Session = Depends(get_db), mode: str = Query("hybr
     reg = db.scalar(select(MarketRegime).where(MarketRegime.market == market).order_by(MarketRegime.as_of.desc()).limit(1))
     ctx = MarketContext(pd.DataFrame(), reg.payload if reg else None, pd.DataFrame(), {})
     f = build_features(df)
-    fp = fundamental_provider()
-    fund = fp.get_fundamentals(ins.symbol) if market == "NSE" else None
-    nd = fp.next_earnings_date(ins.symbol) if market == "NSE" else None
-    if prof.asset_class == "EQUITY":
-        from datetime import timedelta as _td
-
-        from app.services.events_service import next_earnings_days
-
-        dd = next_earnings_days(db, {ins.id: ins.symbol}, date.today()).get(ins.symbol)
-        nd = nd or (date.today() + _td(days=dd) if dd is not None else None)
     meta = data_meta(db, ins, max_lag_days=cfg.validation.max_staleness_days, calendar=prof.calendar)
     events = latest_events(db, market)
-    from app.services.strategy_service import scan_strategies
-
-    liq = 1.0
-    fx = None
-    if market != "NSE":
-        from app.services.fx_service import load_fx_book
-
-        fx = load_fx_book(db)
-        conv = fx.convert(ins.currency, prof.liquidity_currency)
-        liq = conv["rate"] if conv else 1.0
     info_ = {**_info(ins), "volumeless": prof.volumeless}
-    specs = scan_strategies(db) if prof.strategy_set == "equity" else list(strategy_set(prof.strategy_set).values())
-    evals = Analyzer(cfg).evaluate_symbol(ins.symbol, f, events, ctx, today=date.today(), instrument=info_, fundamentals=fund,
-                                          earnings_in_days=(nd - date.today()).days if nd else None, data_meta=meta, market=market,
-                                          only_active=False, strategies=specs, calendar=prof.calendar, liquidity_mult=liq,
+    evals = Analyzer(cfg).evaluate_symbol(ins.symbol, f, events, ctx, today=date.today(), instrument=info_, fundamentals=None,
+                                          earnings_in_days=None, data_meta=meta, market=market,
+                                          only_active=False, strategies=scan_strategies(db), calendar=prof.calendar, liquidity_mult=1.0,
                                           liquidity_currency=prof.liquidity_currency, short_note=prof.short_note or None)
     active_ = [e for e in evals if e["status"] != "NO_SIGNAL"]
     if active_:
         from app.services.scan_service import enrich_setups
 
         full_info = {ins.symbol: {**info_, "id": ins.id, "meta": dict(ins.meta or {})}}
-        enrich_setups(db, active_, market, full_info, fx, {ins.symbol: df})
-        from app.services.ml_service import annotate_setups
-
-        annotate_setups(db, market, active_, {ins.symbol: f}, None, cfg.weights)
+        enrich_setups(db, active_, market, full_info, {ins.symbol: df})
     active = [e for e in evals if e["status"] != "NO_SIGNAL"]
     if run and active:  # link to the persisted signal when the scan evaluated the same bar
         ids = {(sg.strategy_key, str(sg.as_of)): sg.id for sg in db.scalars(select(Signal).where(Signal.scan_run_id == run.id, Signal.symbol == ins.symbol))}
@@ -210,32 +183,3 @@ def analysis(symbol: str, db: Session = Depends(get_db), mode: str = Query("hybr
     })
     get_cache().set_json(key, out, ttl=3 * 3600)
     return out
-
-
-@router.get("/{symbol}/events", dependencies=[Depends(require("analysis:read"))])
-def stock_events(symbol: str, db: Session = Depends(get_db)):
-    """Earnings history (surprises, guidance, historical price reaction), upcoming earnings, relevant
-    economic releases and recent news for one instrument."""
-    from datetime import datetime, timedelta, timezone
-
-    from app.services.events_service import earnings_for, economic_events, news_for
-    from engine.events import earnings_reaction, relevant_events, upcoming_summary
-
-    ins = _instrument(db, symbol)
-    today = date.today()
-    earn = earnings_for(db, {ins.id: ins.symbol}, today - timedelta(days=800), today + timedelta(days=120))
-    past = [e for e in earn if e["event_date"] < str(today)]
-    upcoming = [e for e in earn if e["event_date"] >= str(today)]
-    bars = load_bars(db, {ins.id: ins.symbol}).get(ins.symbol)
-    reaction = earnings_reaction(bars["close"], [e["event_date"] for e in past]) if bars is not None else {"count": 0}
-    now = datetime.now(timezone.utc)
-    ccys = {ins.meta.get("base"), ins.meta.get("quote")} - {None} if ins.market == "FX" else {ins.currency}
-    evs = upcoming_summary(relevant_events(economic_events(db, now - timedelta(hours=1), now + timedelta(days=14)), ins.market, ccys), now, 14, 20)
-    nxt = upcoming[0] if upcoming else None
-    days = (date.fromisoformat(nxt["event_date"]) - today).days if nxt else None
-    return {"symbol": ins.symbol, "market": ins.market,
-            "next_earnings": {**nxt, "days_until": days, "warning": f"⚠ Earnings in {days} days — high event risk" if days is not None and days <= 10 else None} if nxt else None,
-            "earnings_history": past[::-1][:8], "earnings_reaction": reaction, "economic_events": evs,
-            "news": news_for(db, symbols=[ins.symbol], since=now - timedelta(days=30), limit=20),
-            "notes": {"news": "Sentiment is context only; it never generates a setup.",
-                      "earnings": "Earnings within 3 days block new setups; within 10 days they warn."}}

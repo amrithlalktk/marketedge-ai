@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from app.core.cache import get_cache
 from app.core.config import get_settings
 from app.models import (Backtest, BacktestTrade, DataStatus, MarketRegime, MarketSnapshot, ScanRun, Signal, SignalOutcome)
-from app.providers.registry import fundamental_provider
 from app.services.market_data import instrument_maps, load_bars
 from app.services.settings_service import engine_config
 from engine import ENGINE_VERSION
@@ -23,7 +22,7 @@ from engine.analyzer import Analyzer
 from engine.backtest import simulate_trade
 from engine.config import BacktestConfig
 from engine.mtf import trend_state
-from engine.strategies import STRATEGIES, strategy_set
+from engine.strategies import STRATEGIES
 from engine.validation import expected_last_session
 
 log = logging.getLogger(__name__)
@@ -127,52 +126,18 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
         membership, delisted, universe = membership_for(db, market, info, bars)
         ctx = analyzer.market_context(bars[mc.benchmark], feats, vix, membership=membership)
 
-        specs = scan_strategies(db) if prof.strategy_set == "equity" else list(strategy_set(prof.strategy_set).values())
+        specs = scan_strategies(db)
         events = analyzer.build_events(feats, ctx.regime_df, specs, universe_dates={k: (v["listed_on"], v["delisted_on"]) for k, v in info.items()},
                                        membership=membership, final_symbols=delisted)
         if membership is not None:  # today's setups come only from today's point-in-time members
             live = current_members(membership)
             feats = {k: v for k, v in feats.items() if k in live}
 
-        fundamentals, earnings = {}, {}
-        if market == "NSE":  # fundamentals/earnings providers currently cover Indian equities only
-            fp = fundamental_provider()
-            for sym in feats:
-                fd = fp.get_fundamentals(sym)
-                if fd:
-                    fundamentals[sym] = fd
-                nd = fp.next_earnings_date(sym)
-                if nd:
-                    earnings[sym] = (nd - today).days
-        from app.services.events_service import next_earnings_days
-        from app.services.fx_service import load_fx_book
-
-        if prof.asset_class == "EQUITY":  # earnings calendar (DB) for every equity market; fundamentals provider stays a fallback
-            for sym, d in next_earnings_days(db, {info[k]["id"]: k for k in feats}, today).items():
-                earnings.setdefault(sym, d)
-
-        fx = load_fx_book(db) if market != "NSE" else None
-        liq = {}
-        if fx is not None and prof.liquidity_currency != "INR":
-            for sym in feats:
-                conv = fx.convert(info[sym]["currency"], prof.liquidity_currency)
-                liq[sym] = conv["rate"] if conv else 1.0
+        # no fundamentals / earnings / FX feeds in the lite build: technical setups, liquidity in the market's own currency
         result = analyzer.scan(feats, events, ctx, today=today, instruments=info, meta=meta, market=market,
-                               fundamentals=fundamentals, earnings=earnings, strategies=specs, liquidity_mults=liq,
+                               fundamentals={}, earnings={}, strategies=specs, liquidity_mults={},
                                eval_kwargs={"calendar": prof.calendar, "liquidity_currency": prof.liquidity_currency, "short_note": prof.short_note or None})
-        enrich_setups(db, result["valid"] + result["no_trade"], market, info, fx, bars)
-        from app.services.ml_service import annotate_setups, check_drift
-
-        ml_summary = annotate_setups(db, market, result["valid"] + result["no_trade"], feats,
-                                     ctx.breadth_df["pct_above_50"] if not ctx.breadth_df.empty else None, cfg.weights)
-        if cfg.weights.get("ml", 0) > 0:  # an opted-in ML weight can move the score: re-check the minimum-score rule
-            for x in result["valid"] + result["no_trade"]:
-                for c in x["checks"]:
-                    if c["name"] == "Setup score":
-                        c["passed"], c["detail"] = x["score"] >= cfg.validation.min_score, f"Score {x['score']:.0f} (min {cfg.validation.min_score:.0f}; includes ML component)"
-                x["score_label"] = cfg.label_for(x["score"])
-                if x["status"] == "VALID" and any((not c["passed"]) and c["severity"] == "block" for c in x["checks"]):
-                    x["status"] = "NO_TRADE"
+        enrich_setups(db, result["valid"] + result["no_trade"], market, info, bars)
         allsetups = result["valid"] + result["no_trade"]  # enrichment may add blocking checks (e.g. crypto spread)
         result["valid"] = sorted([x for x in allsetups if x["status"] == "VALID"], key=lambda x: -x["score"])
         result["no_trade"] = [x for x in allsetups if x["status"] != "VALID"]
@@ -215,8 +180,6 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
         if market == "CRYPTO":
             top = sorted(feats, key=lambda k: -float(feats[k]["avg_traded_value20"].iloc[-1] or 0))[:12]
             cards = index_overview(bars, info, meta, top, prof.periods_per_year)
-        elif market == "FX":
-            cards = index_overview(bars, info, meta, [k for k in bars], prof.periods_per_year)
         else:
             cards = index_overview(bars, info, meta, None, prof.periods_per_year)
         extra = {}
@@ -228,14 +191,8 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
             extra["btc_dominance_basis"] = ("share of market cap within the tracked universe (provider metadata)" if caps
                                             else "unavailable — provider supplies no market capitalisation")
             extra["stablecoin_flows"] = {"available": False, "note": "No stablecoin-flow feed configured."}
-        from engine.ml.regime_ml import fit_predict as ml_regime
-
-        try:
-            regime_ml = ml_regime(bars[mc.benchmark], rule_regime=ctx.regime_now)
-        except Exception as exc:  # context only; never fail a scan for it
-            regime_ml = {"available": False, "note": f"ML regime unavailable: {exc}"}
         snaps = {
-            "overview": {"indices": cards, "regime": ctx.regime_now, "regime_ml": regime_ml, "ml_model": ml_summary, "is_sample": any_sample,
+            "overview": {"indices": cards, "regime": ctx.regime_now, "is_sample": any_sample,
                          "market": market, "profile": prof.name, "benchmark": mc.benchmark, **extra},
             "breadth": {**ctx.breadth_now, "is_sample": any_sample},
             "sectors": {"sectors": sectors, "as_of": result["as_of"], "is_sample": any_sample,
@@ -256,7 +213,6 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
         run.status, run.finished_at = "done", datetime.now(timezone.utc)
         db.commit()
         resolved = resolve_outcomes(db, feats, cfg.backtest, cfg.levels.max_chase_atr, market)
-        drift = check_drift(db, market)
         try:  # alerts and paper trades react to the freshly scanned bars; never fail the scan for them
             from app.services import alert_service, portfolio_service
 
@@ -266,7 +222,7 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
             run.stats = {**(run.stats or {}), "alerts": {**bar_alerts, "new_setup_fired": setup_alerts}, "paper": paper}
         except Exception:
             log.exception("alert/paper processing after scan failed")
-        run.stats = {**run.stats, "outcomes_resolved": resolved, **({"ml_drift": drift} if drift else {})}
+        run.stats = {**run.stats, "outcomes_resolved": resolved}
         db.commit()
         get_cache().invalidate_prefix("me:")
         prewarm(db, market, allsetups)
@@ -280,27 +236,14 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
         raise
 
 
-def enrich_setups(db: Session, setups: list, market: str, info: Dict[str, dict], fx, bars: Dict[str, pd.DataFrame]) -> None:
-    """Market-specific additions: INR equivalents (non-INR markets), pips (FX), derivatives context (crypto),
-    and for every market: economic-event risk, upcoming events and recent news context."""
-    from datetime import timedelta as _td
-
-    from app.services.events_service import economic_events, news_by_symbol
-    from engine.events import EventRiskConfig, macro_checks, news_context, now_utc, relevant_events, upcoming_summary
-    from engine.markets import pips
-
-    now = now_utc()
-    erc = EventRiskConfig()
-    all_events = economic_events(db, now - _td(hours=1), now + _td(days=8))
-    news = news_by_symbol(db, [s["symbol"] for s in setups], erc.news_window_days)
-
+def enrich_setups(db: Session, setups: list, market: str, info: Dict[str, dict], bars: Dict[str, pd.DataFrame]) -> None:
+    """Additions after evaluation: per-market strategy switches, crypto derivatives context and spread."""
     deriv = {}
     if market == "CRYPTO":
         from app.services.market_data import load_derivatives
         from engine.crypto import derivatives_context
 
         deriv = load_derivatives(db, {info[s["symbol"]]["id"]: s["symbol"] for s in setups})
-    live_events = [e for e in all_events if not e.get("is_sample")]
     from app.services.settings_service import disabled_strategies
 
     off = disabled_strategies(db, market)
@@ -311,53 +254,6 @@ def enrich_setups(db: Session, setups: list, market: str, info: Dict[str, dict],
                                  "detail": f"{st.get('strategy_name') or sid} is disabled for {market} live setups: {off[sid].get('reason') or 'admin decision'}"})
             st["explanation"]["risk_factors"].append(st["checks"][-1]["detail"])
         inf = info[st["symbol"]]
-        # SAMPLE context (calendar, news, FX) never informs a setup on real market data
-        live = not inf.get("is_sample")
-        ccy = inf.get("currency") or "INR"
-        ref = st["current_price"]
-        if fx is not None and ccy != "INR":
-            conv = fx.convert(ccy, "INR")
-            if conv and conv["is_sample"] and live:
-                st["inr"] = {"available": False, "note": f"INR conversion needs a live {ccy}/INR rate; the FX market is on SAMPLE data."}
-            elif conv:
-                r = conv["rate"]
-                risk = abs(ref - st["stop"])
-                st["inr"] = {"rate": round(r, 6), "from": ccy, "via": conv["path"], "rate_as_of": conv["as_of"], "is_sample": conv["is_sample"],
-                             "price_inr": round(ref * r, 2), "risk_per_unit_inr": round(risk * r, 2),
-                             "reward_t1_per_unit_inr": round(abs(st["targets"][0] - ref) * r, 2), "reward_t2_per_unit_inr": round(abs(st["targets"][1] - ref) * r, 2),
-                             "example": {"risk_budget_inr": 10000, "units": int(10000 // (risk * r)) if risk > 0 else 0,
-                                         "position_value_inr": round((10000 // (risk * r)) * ref * r, 0) if risk > 0 else 0,
-                                         "reward_t2_inr": round((10000 // (risk * r)) * abs(st["targets"][1] - ref) * r, 0) if risk > 0 else 0},
-                             "note": "Converted at the latest stored FX close; FX moves change INR outcomes independently of the trade."}
-            else:
-                st["inr"] = {"available": False, "note": f"No FX rate {ccy}/INR available (FX market not ingested)"}
-        if market == "FX":
-            q = inf["meta"].get("quote", "USD")
-            st["pips"] = {"pip_size": 0.01 if q in ("JPY", "INR", "KRW") else 0.0001, "stop_pips": pips(ref - st["stop"], st["symbol"], q),
-                          "t1_pips": pips(st["targets"][0] - ref, st["symbol"], q), "t2_pips": pips(st["targets"][1] - ref, st["symbol"], q),
-                          "standard_lot_units": 100000,
-                          "example_lots": round(st["inr"]["example"]["units"] / 100000, 2) if st.get("inr", {}).get("example") else None,
-                          "rate_differential": {"available": False, "note": "No licensed interest-rate feed configured."},
-                          "macro_calendar": {"available": False, "note": "Economic calendar arrives in Phase 5."}}
-        ccys = {inf["meta"].get("base"), inf["meta"].get("quote")} - {None} if market == "FX" else ({inf.get("currency")} if market != "CRYPTO" else {"USD"})
-        rel = relevant_events(live_events if live else all_events, market, ccys)
-        macro_sensitive = market == "FX" or bool(inf.get("is_index"))
-        mchecks = [c.to_dict() for c in macro_checks(rel, now, macro_sensitive, erc)]
-        if live and all_events and not live_events:
-            mchecks.append({"name": "Economic calendar", "passed": False, "severity": "warn",
-                            "detail": "No live economic calendar configured (only SAMPLE events): macro-event risk is NOT checked for this setup."})
-        st["checks"].extend(mchecks)
-        st["explanation"]["risk_factors"].extend(c["detail"] for c in mchecks)
-        st["events"] = {"upcoming": upcoming_summary(rel, now), "note": "High-impact releases within 24h block macro-sensitive setups (forex, index/options) and warn otherwise."
-                        + (" SAMPLE calendar events are ignored for real market data." if live and all_events and not live_events else "")}
-        arts = news.get(st["symbol"], [])
-        nctx = news_context([a for a in arts if not a.get("is_sample")] if live else arts, st["direction"], now, erc)
-        st["news"] = nctx
-        st["checks"].extend(nctx["checks"])
-        st["explanation"]["risk_factors"].extend(c["detail"] for c in nctx["checks"])
-        if market == "FX" and "pips" in st:
-            st["pips"]["macro_calendar"] = {"available": bool(all_events), "upcoming": st["events"]["upcoming"],
-                                           "note": "Economic releases for the pair's two currencies." if all_events else "No economic calendar ingested."}
         if market == "CRYPTO":
             ctx = derivatives_context(bars[st["symbol"]]["close"], deriv.get(st["symbol"]), st["direction"])
             st["derivatives"] = ctx
@@ -377,7 +273,6 @@ def resolve_outcomes(db: Session, feats: Dict[str, pd.DataFrame], bt: BacktestCo
     from app.services.strategy_service import scan_strategies
 
     custom = {s.id: s for s in scan_strategies(db)}
-    custom.update(strategy_set("price_only"))
     pending = db.execute(select(SignalOutcome, Signal).join(Signal, Signal.id == SignalOutcome.signal_id)
                          .where(SignalOutcome.status == "open", Signal.market == market)).all()
     for outcome, sig in pending:

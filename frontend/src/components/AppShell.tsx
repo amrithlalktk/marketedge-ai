@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { featureOn, setAppConfig, setDefaultMarket } from "@/lib/market";
+import { setDefaultMarket, setEnabledMarkets } from "@/lib/market";
 import { isAdmin, useAuth } from "@/lib/auth";
 import { SAMPLE_BANNER } from "@/lib/constants";
 import { useDataFlags } from "@/lib/dataflags";
@@ -20,23 +20,13 @@ const PRIMARY = [
   { href: "/stocks", label: "Stocks", icon: "⌁" },
   { href: "/watchlists", label: "Watchlists", icon: "☆" },
 ];
-const SECONDARY_ALL = [
+const SECONDARY = [
   { href: "/portfolio", label: "Portfolio" },
   { href: "/alerts", label: "Alerts" },
-  { href: "/options", label: "Options", feature: "options" },
-  { href: "/news", label: "News", feature: "news" },
-  { href: "/calendar", label: "Calendar", feature: "calendar" },
-  { href: "/backtest", label: "Backtest", feature: "backtest" },
-  { href: "/strategies", label: "Strategies", feature: "strategies" },
-  { href: "/analytics", label: "Hit rates", feature: "analytics" },
-  { href: "/ml", label: "ML", feature: "ml" },
+  { href: "/options", label: "Options" },
   { href: "/risk", label: "Risk" },
   { href: "/account", label: "Account" },
-] as const;
-type Feature = Parameters<typeof featureOn>[0];
-const FEATURE_PAGES: Record<string, Feature> = { "/options": "options", "/news": "news", "/calendar": "calendar", "/backtest": "backtest",
-  "/strategies": "strategies", "/analytics": "analytics", "/ml": "ml" };
-const pageFeature = (path: string) => Object.entries(FEATURE_PAGES).find(([p]) => path === p || path.startsWith(`${p}/`))?.[1];
+];
 
 function active(path: string, href: string) {
   return href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`);
@@ -82,7 +72,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     api.markets
       .list()
       .then((r) => {
-        setAppConfig({ markets: r.items.map((m) => m.id), features: r.features });
+        setEnabledMarkets(r.items.map((m) => m.id));
         setDefaultMarket(r.default_market);
       })
       .catch(() => undefined) // fall back to NSE
@@ -105,9 +95,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const SECONDARY = SECONDARY_ALL.filter((n) => !("feature" in n) || featureOn(n.feature));
   const secondary = [...SECONDARY, ...(isAdmin(user) ? [{ href: "/admin", label: "Admin" }] : [])];
-  const offFeature = marketReady ? pageFeature(path) : undefined;
 
   return (
     <div className="min-h-screen pb-20 xl:pb-0">
@@ -126,7 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </Link>
           <nav aria-label="Primary" className="hidden min-w-0 flex-1 items-center gap-0.5 xl:flex">
-            {[...PRIMARY, ...secondary.slice(0, 5)].map((n) => (
+            {[...PRIMARY, ...secondary].map((n) => (
               <NavLink
                 key={n.href}
                 href={n.href}
@@ -136,18 +124,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {n.label}
               </NavLink>
             ))}
-            <details className="relative" key={path}>
-              <summary className={cx("cursor-pointer list-none whitespace-nowrap rounded px-2 py-1.5 text-sm", secondary.slice(5).some((n) => active(path, n.href)) ? "bg-panel2 text-ink" : "text-muted hover:text-ink")}>More ▾</summary>
-              <ul className="absolute left-0 z-50 mt-1 w-44 rounded-md border border-edge bg-panel p-1 shadow-xl">
-                {secondary.slice(5).map((n) => (
-                  <li key={n.href}>
-                    <NavLink href={n.href} aria-current={active(path, n.href) ? "page" : undefined} className={cx("block rounded px-2 py-1.5 text-sm", active(path, n.href) ? "bg-panel2 text-ink" : "text-muted hover:bg-panel2 hover:text-ink")}>
-                      {n.label}
-                    </NavLink>
-                  </li>
-                ))}
-              </ul>
-            </details>
           </nav>
           <div className="ml-auto flex items-center gap-2 text-xs text-muted">
             <NotificationBell />
@@ -175,11 +151,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Loading label="Redirecting to sign in…" />
         ) : !marketReady ? (
           <Loading label="Loading markets…" />
-        ) : offFeature && !featureOn(offFeature) ? (
-          <div role="status" className="rounded-md border border-edge bg-panel p-4 text-sm">
-            <p className="font-semibold">This feature is switched off</p>
-            <p className="mt-1 text-muted">The app runs in simple mode. Remove “{offFeature}” from FEATURES_DISABLED in .env to bring it back.</p>
-          </div>
         ) : (
           children
         )}

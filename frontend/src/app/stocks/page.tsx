@@ -31,7 +31,7 @@ function StocksInner() {
 
   return (
     <>
-      <PageHeader title={`Instruments — ${all ? "all markets" : marketLabel(market)}`} subtitle="Search stocks, coins and currency pairs; open charts and analysis." right={<MarketSwitcher />} />
+      <PageHeader title={`Instruments — ${all ? "all markets" : marketLabel(market)}`} subtitle="Search Indian stocks and crypto coins; open charts and analysis." right={<MarketSwitcher />} />
       <form role="search" className="mb-3 flex flex-wrap items-end gap-3" onSubmit={(e) => e.preventDefault()}>
         <div className="min-w-0 flex-1">
           <label className="label" htmlFor="q">Symbol or name</label>

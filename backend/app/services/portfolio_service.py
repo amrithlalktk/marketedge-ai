@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from app.brokers import PaperBroker
 from app.models import Instrument, Portfolio, PortfolioTrade
-from app.services.fx_service import load_fx_book
 from app.services.market_data import load_bars
 from engine.journal import analytics
 from engine.paper import PaperOrder
@@ -55,10 +54,23 @@ def latest_bar_time(db: Session, ins: Instrument) -> Optional[pd.Timestamp]:
     return df.index[-1] if df is not None and len(df) else None
 
 
+def _same_currency(p: Portfolio, ins: Instrument) -> None:
+    """The lite build has no FX feed, so a portfolio holds one currency (INR for NSE, USD for crypto)."""
+    ccy = "USD" if (ins.currency or "") in ("USD", "USDT") else (ins.currency or "INR")
+    if ccy != p.base_currency:
+        raise ValueError(f"{ins.symbol} trades in {ccy} but this portfolio is in {p.base_currency}. "
+                         f"Use a {ccy} portfolio (no currency conversion in the lite build).")
+
+
+def load_fx_book(db: Session):  # kept for call sites: same-currency portfolios need no conversion
+    return None
+
+
 def place(db: Session, p: Portfolio, ins: Instrument, spec: dict) -> PortfolioTrade:
     """Paper order. The order time is the latest stored bar: it fills from the NEXT bar on (never the bar it was placed on)."""
     from app.services.settings_service import engine_config
 
+    _same_currency(p, ins)
     ref = latest_bar_time(db, ins)
     if ref is None:
         raise ValueError(f"No market data for {ins.symbol}")
@@ -77,6 +89,7 @@ def place(db: Session, p: Portfolio, ins: Instrument, spec: dict) -> PortfolioTr
 
 def journal_entry(db: Session, p: Portfolio, ins: Instrument, spec: dict) -> PortfolioTrade:
     """User-entered real trade (no simulation): entry/exit/qty/brokerage/taxes as reported by the user."""
+    _same_currency(p, ins)
     sign = 1 if spec["direction"] == "LONG" else -1
     closed = spec.get("exit_price") is not None
     gross = sign * (spec["exit_price"] - spec["entry_price"]) * spec["quantity"] if closed else 0.0
@@ -135,8 +148,8 @@ def _base(t: PortfolioTrade) -> str:
 
 
 def _rate(fx, ccy: str, base: str) -> float:
-    if ccy == base:
-        return 1.0
+    if ccy == base or (ccy == "USDT" and base == "USD") or fx is None:
+        return 1.0  # same-currency portfolios only (enforced when a trade is added)
     c = fx.convert(ccy, base)
     return c["rate"] if c else 1.0
 

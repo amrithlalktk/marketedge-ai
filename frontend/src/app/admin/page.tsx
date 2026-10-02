@@ -4,14 +4,14 @@ import { useEffect, useState } from "react";
 import { Card, Confirm, EmptyState, ErrorState, Field, InlineError, Loading, PageHeader, Pill, Segmented, Stat, TableWrap } from "@/components/ui";
 import { api } from "@/lib/api";
 import { isAdmin, useAuth } from "@/lib/auth";
-import { COMPONENT_LABELS } from "@/lib/constants";
+import { COMPONENT_LABELS, RETIRED_COMPONENTS } from "@/lib/constants";
 import { invalidateWeights } from "@/lib/weights";
-import { dateTime, humanize } from "@/lib/format";
-import { MARKETS, marketLabel } from "@/lib/market";
-import type { AdminHealth, AdminUser, AuditLog, EngineSettings, Job, MarketInfo, Providers } from "@/lib/types";
+import { dateTime, humanize, num, pct } from "@/lib/format";
+import { marketLabel } from "@/lib/market";
+import type { AdminHealth, AdminStrategies, AdminStrategy, AdminUser, AuditLog, EngineSettings, Job, JobStart, MarketInfo, Providers } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
-type Tab = "health" | "jobs" | "scoring" | "users" | "audit" | "providers";
+type Tab = "health" | "jobs" | "scoring" | "strategies" | "users" | "audit" | "providers";
 
 function HealthTab() {
   const h = useApi<AdminHealth>(() => api.admin.health(), []);
@@ -28,15 +28,10 @@ function HealthTab() {
         <Stat label="Failed jobs" value={d.failed_jobs} valueClass={d.failed_jobs ? "text-down" : "text-up"} />
       </div>
       {d.provider.note != null && <p className="text-xs text-muted">Provider note: {String(d.provider.note)}</p>}
-      {(d.readiness || d.queues) && (
+      {d.readiness && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          {d.readiness && (
-            <Stat label="Readiness" value={d.readiness.ready ? "READY" : "NOT READY"} valueClass={d.readiness.ready ? "text-up" : "text-down"}
-              sub={`migrations: ${d.readiness.checks.migrations ?? "—"}`} />
-          )}
-          {Object.entries(d.queues ?? {}).map(([q, n]) => (
-            <Stat key={q} label={`Queue · ${q}`} value={n} sub="waiting" valueClass={n > 20 ? "text-down" : undefined} />
-          ))}
+          <Stat label="Readiness" value={d.readiness.ready ? "READY" : "NOT READY"} valueClass={d.readiness.ready ? "text-up" : "text-down"}
+            sub={`migrations: ${d.readiness.checks.migrations ?? "—"}`} />
         </div>
       )}
       <Card title="Data sources" right={<button className="btn-ghost px-2 py-1 text-xs" onClick={h.reload}>Refresh</button>}>
@@ -100,13 +95,14 @@ function MarketsList({ tick }: { tick: number }) {
   );
 }
 
+type JobMarket = "NSE" | "CRYPTO";
+type JobKey = `daily-${JobMarket}` | `full-${JobMarket}` | "options";
+
 function JobsTab() {
   const jobs = useApi<{ items: Job[] }>(() => api.admin.jobs(50), []);
-  const [market, setMarket] = useState("NSE");
   const [tick, setTick] = useState(0);
-  const [full, setFull] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<JobKey | null>(null);
+  const [msg, setMsg] = useState<{ text: string; url?: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const anyRunning = jobs.data?.items.some((j) => j.status === "queued" || j.status === "running");
   const { reload } = jobs;
@@ -116,12 +112,12 @@ function JobsTab() {
     return () => clearTimeout(t);
   }, [anyRunning, reload, jobs.data]);
 
-  const trigger = async (kind: "ingest" | "scan" | "options" | "news" | "calendar" | "ml") => {
-    setBusy(kind); setError(null); setMsg(null);
+  const trigger = async (key: JobKey, label: string, run: () => Promise<JobStart>) => {
+    setBusy(key); setError(null); setMsg(null);
     try {
-      const r = kind === "ingest" ? await api.admin.ingest(full, market) : kind === "scan" ? await api.admin.scan(market) : kind === "news" ? await api.admin.news(market) : kind === "calendar" ? await api.admin.calendar() : kind === "ml" ? await api.admin.mlTrain(market) : await api.admin.options();
-      const label = kind === "options" ? "Options ingest + analysis" : kind === "calendar" ? "Calendar refresh" : kind === "news" ? `News fetch (${marketLabel(market)})` : kind === "ml" ? `ML training (${marketLabel(market)})` : `${humanize(kind)} (${marketLabel(market)})`;
-      setMsg(`${label} job #${r.job_id} submitted.`);
+      const r = await run();
+      if (r.dispatched) setMsg({ text: `${label}: started on GitHub Actions. It runs there (up to about an hour); refresh this page afterwards.`, url: r.actions_url });
+      else setMsg({ text: `${label}: job #${r.job_id} ${r.status ?? "submitted"}.` });
       reload();
       setTick((t) => t + 1);
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(null); }
@@ -129,24 +125,40 @@ function JobsTab() {
 
   return (
     <div className="space-y-4">
-      <Card title="Trigger jobs">
-        <p className="mb-3 text-sm text-muted">Run <strong className="text-ink">ingestion</strong> first to fetch bars, then a <strong className="text-ink">scan</strong> to compute market snapshots, strategy performance and today&apos;s setups. <strong className="text-ink">Options analysis</strong> ingests the NIFTY option chain and rebuilds the options view. <strong className="text-ink">News</strong> fetches and classifies headlines for the selected market; <strong className="text-ink">calendars</strong> refresh economic releases and earnings dates (setups pick them up on the next scan).</p>
-        <div className="flex flex-wrap items-center gap-3">
-          <Field label="Market" htmlFor="job-mkt">
-            <select id="job-mkt" className="input w-auto" value={market} onChange={(e) => setMarket(e.target.value)}>
-              {MARKETS.map((m) => <option key={m.id} value={m.id}>{m.label} ({m.id})</option>)}
-            </select>
-          </Field>
-          <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} /> Full history re-ingest</label>
-          <button className="btn-primary" disabled={!!busy} onClick={() => trigger("ingest")}>{busy === "ingest" ? "Ingesting…" : `Run ingestion — ${market}`}</button>
-          <button className="btn-primary" disabled={!!busy} onClick={() => trigger("scan")}>{busy === "scan" ? "Scanning…" : `Run scan — ${market}`}</button>
-          <button className="btn-primary" disabled={!!busy} onClick={() => trigger("options")}>{busy === "options" ? "Analysing options…" : "Run options analysis"}</button>
-          <button className="btn-ghost" disabled={!!busy} onClick={() => trigger("news")}>{busy === "news" ? "Fetching news…" : `Fetch news — ${market}`}</button>
-          <button className="btn-ghost" disabled={!!busy} onClick={() => trigger("ml")}>{busy === "ml" ? "Training…" : `Train ML — ${market}`}</button>
-          <button className="btn-ghost" disabled={!!busy} onClick={() => trigger("calendar")}>{busy === "calendar" ? "Refreshing…" : "Refresh calendars"}</button>
+      <Card title="Run jobs">
+        <p className="mb-3 text-sm text-muted">The <strong className="text-ink">daily pipeline</strong> is what the schedule runs after each close: it fetches the latest bars, then scans for setups, refreshes market snapshots and strategy statistics, and updates outcomes. A <strong className="text-ink">full history reload</strong> re-fetches all bars first (slow). <strong className="text-ink">Options analysis</strong> ingests the NIFTY option chain and rebuilds the options view.</p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {(["NSE", "CRYPTO"] as const).map((m) => (
+            <div key={m} className="rounded border border-edge p-3">
+              <p className="text-sm font-semibold">{marketLabel(m)} <span className="font-mono text-xs text-muted">({m})</span></p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button className="btn-primary" disabled={!!busy} onClick={() => trigger(`daily-${m}`, `Daily pipeline (${marketLabel(m)})`, () => api.admin.runDaily(m))}>
+                  {busy === `daily-${m}` ? "Running…" : "Run daily pipeline now"}
+                </button>
+                {busy ? (
+                  <button className="btn-ghost" disabled>{busy === `full-${m}` ? "Reloading…" : "Full history reload"}</button>
+                ) : (
+                  <Confirm label="Yes, reload all history" onConfirm={() => trigger(`full-${m}`, `Full history reload (${marketLabel(m)})`, () => api.admin.runDaily(m, true))}>Full history reload</Confirm>
+                )}
+              </div>
+            </div>
+          ))}
+          <div className="rounded border border-edge p-3">
+            <p className="text-sm font-semibold">NIFTY options</p>
+            <div className="mt-2">
+              <button className="btn-primary" disabled={!!busy} onClick={() => trigger("options", "Options analysis", () => api.admin.options())}>
+                {busy === "options" ? "Analysing options…" : "Run options analysis"}
+              </button>
+            </div>
+          </div>
         </div>
-        {busy && <p className="mt-2 text-xs text-muted">With eager (in-process) jobs the request waits until the job finishes.</p>}
-        {msg && <p role="status" className="mt-2 text-sm text-green-300">{msg}</p>}
+        {busy && <p className="mt-2 text-xs text-muted">When jobs run in-process the request waits until the job finishes.</p>}
+        {msg && (
+          <p role="status" className="mt-2 text-sm text-green-300">
+            {msg.text}{" "}
+            {msg.url && <a className="link" href={msg.url} target="_blank" rel="noopener noreferrer">Open GitHub Actions <span aria-hidden>↗</span><span className="sr-only">(opens in a new tab)</span></a>}
+          </p>
+        )}
         <InlineError error={error} />
       </Card>
       <MarketsList tick={tick} />
@@ -158,7 +170,7 @@ function JobsTab() {
               <tbody>
                 {jobs.data.items.map((j) => (
                   <tr key={j.id}>
-                    <td className="num">{j.id}</td><td>{j.kind}</td><td className="font-mono">{typeof j.params?.market === "string" ? j.params.market : j.kind === "options" ? "NFO" : j.kind === "calendar" ? "all" : "—"}</td>
+                    <td className="num">{j.id}</td><td>{j.kind}</td><td className="font-mono">{typeof j.params?.market === "string" ? j.params.market : j.kind === "options" ? "NFO" : "—"}</td>
                     <td><Pill tone={j.status === "done" ? "green" : j.status === "failed" ? "red" : "amber"}>{j.status}</Pill></td>
                     <td className="num whitespace-nowrap">{dateTime(j.created_at)}</td><td className="num whitespace-nowrap">{dateTime(j.finished_at)}</td>
                     <td className="max-w-[28rem] break-words font-mono text-[11px] text-muted">{j.error ? <span className="text-down">{j.error}</span> : j.result ? JSON.stringify(j.result).slice(0, 300) : "—"}</td>
@@ -207,8 +219,8 @@ function ScoringTab() {
     <form onSubmit={save} className="space-y-4">
       <Card title="Scoring weights" right={<span className="num text-xs text-muted">Total {total} (weights are normalised by the engine)</span>}>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {Object.keys(weights).map((k) => (
-            <Field key={k} label={COMPONENT_LABELS[k] ?? humanize(k)} htmlFor={`w-${k}`} hint={k === "historical" ? "Empirical hit-rate evidence. Default 0 = context only." : k === "ml" ? "Active ML model probability (only when a model passed the gate). Default 0 = context only." : undefined}>
+          {Object.keys(weights).filter((k) => !RETIRED_COMPONENTS.includes(k)).map((k) => (
+            <Field key={k} label={COMPONENT_LABELS[k] ?? humanize(k)} htmlFor={`w-${k}`} hint={k === "historical" ? "Empirical hit-rate evidence. Default 0 = context only." : undefined}>
               <input id={`w-${k}`} className="input num" type="number" min={0} max={100} step="1" value={weights[k]} onChange={(e) => setWeights((p) => ({ ...p, [k]: e.target.value }))} />
             </Field>
           ))}
@@ -244,6 +256,92 @@ function ScoringTab() {
         <p className="mt-2 text-[11px] text-muted">Analysis mode: {q.data.effective.analysis_mode} · Overrides stored: {Object.keys(q.data.overrides).join(", ") || "none"}</p>
       </Card>
     </form>
+  );
+}
+
+function StrategyRow({ market, st, onChanged }: { market: JobMarket; st: AdminStrategy; onChanged: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const p = st.performance;
+  const off = st.disabled;
+  const set = async (enabled: boolean) => {
+    setBusy(true); setError(null);
+    try {
+      await api.admin.setStrategyEnabled(market, st.id, enabled, enabled ? "" : reason.trim());
+      setAsking(false); setReason("");
+      onChanged();
+    } catch (e) { setError(e instanceof Error ? e.message : "Update failed"); } finally { setBusy(false); }
+  };
+  return (
+    <tr>
+      <th scope="row" className="text-left align-top">
+        <span className="font-semibold">{st.name}</span> <span className="font-mono text-[11px] font-normal text-muted">{st.id}</span>
+        <span className="block text-[11px] font-normal text-muted">{st.direction} · {st.description}</span>
+        {p?.warnings && p.warnings.length > 0 && <span className="mt-0.5 block text-[11px] font-normal text-amber-300">⚠ {p.warnings.join(" · ")}</span>}
+      </th>
+      <td className="num text-right align-top">{p?.trades ?? "—"}</td>
+      <td className="num text-right align-top">{p?.t1_hit_rate == null ? "—" : pct(p.t1_hit_rate)}</td>
+      <td className="num text-right align-top">{p?.stop_rate == null ? "—" : pct(p.stop_rate)}</td>
+      <td className="num text-right align-top">{p?.expectancy_r == null ? "—" : `${p.expectancy_r > 0 ? "+" : ""}${num(p.expectancy_r, 2)}R`}</td>
+      <td className="num whitespace-nowrap align-top text-[11px] text-muted">{p?.backtest_period ? `${p.backtest_period[0]} → ${p.backtest_period[1]}` : "no backtest yet"}</td>
+      <td className="align-top">
+        {off ? (
+          <div className="space-y-1">
+            <Pill tone="red">Off</Pill>
+            <p className="max-w-[16rem] break-words text-[11px] text-muted">Reason: {off.reason || "—"} · {dateTime(off.at)}</p>
+            <button className="btn-ghost px-2 py-1 text-xs" disabled={busy} onClick={() => set(true)}>{busy ? "Saving…" : "Switch on"}</button>
+          </div>
+        ) : asking ? (
+          <form className="space-y-1" onSubmit={(e) => { e.preventDefault(); void set(false); }}>
+            <label className="sr-only" htmlFor={`why-${st.id}`}>Reason for switching off {st.name}</label>
+            <input id={`why-${st.id}`} className="input py-1 text-xs" placeholder="Reason (required)" maxLength={500} required value={reason} onChange={(e) => setReason(e.target.value)} />
+            <span className="flex gap-1">
+              <button className="btn-danger px-2 py-1 text-xs" disabled={busy || !reason.trim()}>{busy ? "Saving…" : "Switch off"}</button>
+              <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => { setAsking(false); setReason(""); }}>Cancel</button>
+            </span>
+          </form>
+        ) : (
+          <span className="flex flex-wrap items-center gap-1">
+            <Pill tone="green">On</Pill>
+            <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setAsking(true)}>Switch off…</button>
+          </span>
+        )}
+        <InlineError error={error} />
+      </td>
+    </tr>
+  );
+}
+
+function StrategiesTab() {
+  const [market, setMarket] = useState<JobMarket>("NSE");
+  const q = useApi<AdminStrategies>(() => api.admin.strategies(market), [market]);
+  return (
+    <div className="space-y-4">
+      <Segmented<JobMarket> label="Market" value={market} onChange={setMarket} options={[{ value: "NSE", label: marketLabel("NSE") }, { value: "CRYPTO", label: marketLabel("CRYPTO") }]} />
+      <Card title={`Built-in strategies — ${marketLabel(market)}`} right={<button className="btn-ghost px-2 py-1 text-xs" onClick={q.reload}>Refresh</button>}>
+        {q.error ? <ErrorState error={q.error} onRetry={q.reload} what="strategies" /> : !q.data ? <Loading /> : q.data.items.length === 0 ? <EmptyState title="No strategies" /> : (
+          <TableWrap label={`Strategies for ${marketLabel(market)}`}>
+            <table className="tbl min-w-[860px] text-xs">
+              <thead>
+                <tr>
+                  <th scope="col">Strategy</th><th scope="col" className="text-right">Trades</th><th scope="col" className="text-right">T1 hit rate</th>
+                  <th scope="col" className="text-right">Stop rate</th><th scope="col" className="text-right">Expectancy</th><th scope="col">Backtest period</th><th scope="col">Live setups</th>
+                </tr>
+              </thead>
+              <tbody>
+                {q.data.items.map((st) => <StrategyRow key={st.id} market={market} st={st} onChanged={q.reload} />)}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+        <p className="mt-2 text-[11px] text-muted">
+          Historical results from the latest scan&apos;s backtest of this market, before slippage you may get in practice; small trade counts are unreliable.
+          Past hit rates are not a forecast. Switching a strategy off stops it producing live setups in this market from the next scan; it is still backtested, so its statistics keep updating.
+        </p>
+      </Card>
+    </div>
   );
 }
 
@@ -421,9 +519,10 @@ function ProvidersTab() {
   const d = q.data;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card title="Market data provider"><p className="text-sm">Active: <Pill tone="blue">{d.market_data.active}</Pill></p><p className="mt-1 text-xs text-muted">Available: {d.market_data.available.join(", ")}</p></Card>
-        <Card title="Fundamentals provider"><p className="text-sm">Active: <Pill tone="blue">{d.fundamentals.active}</Pill></p><p className="mt-1 text-xs text-muted">Available: {d.fundamentals.available.join(", ")}</p></Card>
+        <Card title="Options provider"><p className="text-sm">Active: <Pill tone="blue">{d.options.active}</Pill></p><p className="mt-1 text-xs text-muted">Available: {d.options.available.join(", ")}</p></Card>
+        <Card title="Crypto provider"><p className="text-sm">Active: <Pill tone="blue">{d.crypto.active}</Pill></p><p className="mt-1 text-xs text-muted">Available: {d.crypto.available.join(", ")}</p></Card>
       </div>
       <UpstoxCard />
       <Card title="Stored API keys">
@@ -444,10 +543,8 @@ function ProvidersTab() {
             <li><span className="font-mono text-ink">whatsapp</span> / <span className="font-mono text-ink">ACCESS_TOKEN</span> — WhatsApp Cloud API</li>
           </ul>
           <p className="mt-2 font-semibold text-ink">Market data:</p>
-          <ul className="mt-1 grid grid-cols-1 gap-0.5 sm:grid-cols-2">
-            <li><span className="font-mono text-ink">angelone</span> / <span className="font-mono text-ink">API_KEY</span>, <span className="font-mono text-ink">CLIENT_CODE</span>, <span className="font-mono text-ink">MPIN</span>, <span className="font-mono text-ink">TOTP_SECRET</span> — Angel One SmartAPI (NSE + NIFTY options)</li>
+          <ul className="mt-1 grid grid-cols-1 gap-0.5">
             <li><span className="font-mono text-ink">upstox</span> / <span className="font-mono text-ink">API_KEY</span>, <span className="font-mono text-ink">API_SECRET</span> — Upstox (NSE + NIFTY options; then Connect daily)</li>
-            <li><span className="font-mono text-ink">twelvedata</span> / <span className="font-mono text-ink">API_KEY</span> — US / global stocks and forex</li>
           </ul>
           <p className="mt-1">Non-secret settings (SMTP host/sender, bot username, VAPID public key, WhatsApp phone-number id and approved template) come from the server environment. A channel shows “not configured” to users until both are present.</p>
         </div>
@@ -472,6 +569,7 @@ export default function AdminPage() {
     { value: "health", label: "Health", perm: "admin:jobs" },
     { value: "jobs", label: "Jobs", perm: "admin:jobs" },
     { value: "scoring", label: "Scoring", perm: "admin:settings" },
+    { value: "strategies", label: "Strategies", perm: "admin:settings" },
     { value: "users", label: "Users", perm: "admin:users" },
     { value: "audit", label: "Audit", perm: "audit:read" },
     { value: "providers", label: "Providers", perm: "admin:providers" },
@@ -486,11 +584,12 @@ export default function AdminPage() {
   const current = allowed.some((t) => t.value === tab) ? tab : allowed[0].value;
   return (
     <>
-      <PageHeader title="Administration" subtitle="System health, jobs, scoring configuration, users and providers." />
+      <PageHeader title="Administration" subtitle="System health, jobs, scoring, strategy switches, users and providers." />
       <div className="mb-4"><Segmented<Tab> label="Admin section" value={current} onChange={setTab} options={allowed} /></div>
       {current === "health" && <HealthTab />}
       {current === "jobs" && <JobsTab />}
       {current === "scoring" && <ScoringTab />}
+      {current === "strategies" && <StrategiesTab />}
       {current === "users" && <UsersTab />}
       {current === "audit" && <AuditTab />}
       {current === "providers" && <ProvidersTab />}

@@ -9,13 +9,12 @@ import { DataStamp, Disclaimer, EmptyState, ErrorState, PageHeader, Segmented, S
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { SORT_OPTIONS } from "@/lib/constants";
-import { featureOn, marketLabel, marketOn, useMarket, withMarket, type MarketId } from "@/lib/market";
+import { marketLabel, marketOn, useMarket, withMarket, type MarketId } from "@/lib/market";
 import type { OptionSignals, SortKey, TopSetups } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
 type Tab = "valid" | "no_trade";
 type Dir = "ALL" | "LONG" | "SHORT";
-type Region = "ALL" | "US" | "EUROPE" | "ASIA";
 
 function Grid({ children }: { children: React.ReactNode }) {
   return <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{children}</div>;
@@ -63,7 +62,7 @@ function Section({ id, title, subtitle, children, right }: { id: string; title: 
   );
 }
 
-function MarketSection({ market, title }: { market: Exclude<MarketId, "US" | "EUROPE" | "ASIA">; title: string }) {
+function MarketSection({ market, title }: { market: MarketId; title: string }) {
   const { can } = useAuth();
   const [sort, setSort] = useState<SortKey>("score");
   const [dir, setDir] = useState<Dir>("ALL");
@@ -85,41 +84,6 @@ function MarketSection({ market, title }: { market: Exclude<MarketId, "US" | "EU
               <Grid>{d.items.map((s) => <SetupCard key={s.id} s={s} />)}</Grid>
             </>
           )}
-        </>
-      )}
-    </Section>
-  );
-}
-
-function GlobalSection() {
-  const { can } = useAuth();
-  const [sort, setSort] = useState<SortKey>("score");
-  const [dir, setDir] = useState<Dir>("ALL");
-  const [region, setRegion] = useState<Region>("ALL");
-  const q = useApi<TopSetups>(() => api.signals.global({ region: region === "ALL" ? undefined : region, sort, direction: dir === "ALL" ? undefined : dir, limit: 30 }), [region, sort, dir]);
-  const d = q.data;
-  return (
-    <Section id="GLOBAL" title="US / Global stocks" subtitle="US (NYSE/NASDAQ), Europe (LSE/XETRA/Euronext), Asia (TSE/HKEX/SGX/KRX)">
-      <Controls id="global" sort={sort} setSort={setSort} dir={dir} setDir={setDir} extra={
-        <div>
-          <span className="label">Region</span>
-          <Segmented<Region> label="Region filter" value={region} onChange={setRegion} options={[{ value: "ALL", label: "All" }, { value: "US", label: "US" }, { value: "EUROPE", label: "Europe" }, { value: "ASIA", label: "Asia" }]} />
-        </div>
-      } />
-      {q.error ? <ErrorState error={q.error} onRetry={q.reload} what="global setups" /> : !d ? <Skeleton className="h-40" /> : (
-        <>
-          {d.markets && (
-            <ul className="mb-2 flex flex-wrap gap-2 text-[11px] text-muted">
-              {Object.entries(d.markets).map(([m, r]) => (
-                <li key={m} className="rounded border border-edge px-2 py-1">
-                  <span className="font-semibold text-ink">{marketLabel(m)}</span> · scan #{r.scan_run_id} · {r.as_of}
-                  {r.market_message && <span className="block text-amber-300">{r.market_message}</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="mb-2 text-xs text-muted"><span className="num text-ink">{d.items.length}</span> shown of <span className="num text-ink">{d.total_valid}</span> valid{!can("signals:read_all") && d.total_valid > d.items.length && " · Standard plan shows the top 5"}</p>
-          {d.items.length === 0 ? <NoValid message={d.market_message} /> : <Grid>{d.items.map((s) => <SetupCard key={s.id} s={s} />)}</Grid>}
         </>
       )}
     </Section>
@@ -179,8 +143,6 @@ const ORDER: { id: string; node: () => React.ReactNode; label: string }[] = [
   { id: "NFO", label: "NIFTY Options", node: () => <OptionsSection /> },
   { id: "NSE", label: "Indian Stocks", node: () => <MarketSection market="NSE" title="Indian Stocks (NSE)" /> },
   { id: "CRYPTO", label: "Crypto", node: () => <MarketSection market="CRYPTO" title="Crypto" /> },
-  { id: "GLOBAL", label: "US / Global", node: () => <GlobalSection /> },
-  { id: "FX", label: "Forex", node: () => <MarketSection market="FX" title="Forex" /> },
 ];
 
 function SetupsInner() {
@@ -195,9 +157,8 @@ function SetupsInner() {
     const q = p.toString();
     router.replace(q ? `/setups?${q}` : "/setups", { scroll: false });
   };
-  const focus = ["US", "EUROPE", "ASIA"].includes(market) ? "GLOBAL" : market;
-  const on = (id: string) =>
-    id === "NFO" ? marketOn("NSE") && featureOn("options") : id === "GLOBAL" ? (["US", "EUROPE", "ASIA"] as const).some(marketOn) : marketOn(id as MarketId);
+  const focus = market;
+  const on = (id: string) => (id === "NFO" ? marketOn("NSE") : marketOn(id as MarketId));
   const shown = ORDER.filter((o) => on(o.id));
   const sections = market === "NSE" ? shown : [...shown.filter((o) => o.id === focus), ...shown.filter((o) => o.id !== focus)];
 

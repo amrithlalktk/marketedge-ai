@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
+
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from engine.config import DEFAULT_WEIGHTS, LevelConfig
+from engine.config import DEFAULT_WEIGHTS
 
 
 class RegisterIn(BaseModel):
@@ -47,7 +47,7 @@ class TotpDisable(BaseModel):
 class WatchlistIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     # the six market ids, plus the legacy list categories kept for existing watchlists
-    market: str = Field(default="NSE", pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX|NIFTY|GLOBAL|FOREX|MIXED)$")
+    market: str = Field(default="NSE", pattern="^(NSE|CRYPTO|NIFTY|MIXED)$")
 
 
 class WatchlistItemIn(BaseModel):
@@ -83,90 +83,11 @@ class PortfolioRiskIn(BaseModel):
     positions: List[Dict[str, Any]] = Field(max_length=500)
 
 
-class Condition(BaseModel):
-    left: Any
-    op: str
-    right: Any
-
-
-class Exits(BaseModel):
-    stop_method: str = Field(default="structure", pattern="^(structure|atr)$")
-    atr_stop_mult: Optional[float] = Field(default=None, ge=0.5, le=6)
-    t1_r: Optional[float] = Field(default=None, ge=0.5, le=5)
-    t2_r: Optional[float] = Field(default=None, ge=1, le=10)
-    max_hold_bars: Optional[int] = Field(default=None, ge=1, le=120)
-
-
-class StrategyDefinition(BaseModel):
-    """Operands are numbers, feature names or {"feature", "mult", "shift"}; the engine validates them."""
-    name: str = Field(min_length=1, max_length=128)
-    direction: str = Field(pattern="^(LONG|SHORT)$")
-    conditions: List[Condition] = Field(default_factory=list, max_length=12)
-    any_of: Optional[List[List[Condition]]] = Field(default=None, max_length=4)
-    exits: Optional[Exits] = None
-    max_hold_bars: int = Field(default=20, ge=1, le=120)
-
-    def engine_dict(self) -> dict:
-        d = self.model_dump(exclude_none=True)
-        if self.exits:
-            d["exits"] = self.exits.model_dump(exclude_none=True)
-        return d
-
-
-class StrategyIn(StrategyDefinition):
-    key: str = Field(pattern=r"^[a-z0-9_]{3,64}$")
-    note: str = Field(default="", max_length=500)
-
-
-class StrategyVersionIn(StrategyDefinition):
-    note: str = Field(default="", max_length=500)
-
-
-class StrategyPatch(BaseModel):
-    include_in_scan: Optional[bool] = None
-    is_active: Optional[bool] = None
-
-
-_LEVEL_FIELDS = set(LevelConfig().__dict__)
-
-
 class PortfolioIn(BaseModel):
     initial_capital: float = Field(default=1_000_000, ge=10_000, le=1e11)
     max_positions: int = Field(default=10, ge=1, le=100)
     max_position_pct: float = Field(default=20, gt=0, le=100)
     max_sector_pct: Optional[float] = Field(default=None, gt=0, le=100)
-
-
-class BacktestIn(BaseModel):
-    market: str = Field(default="NSE", pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX)$")
-    strategy_key: Optional[str] = Field(default=None, max_length=64)
-    strategy_version: Optional[int] = Field(default=None, ge=1)
-    portfolio: Optional[PortfolioIn] = Field(default_factory=PortfolioIn)
-    definition: Optional[StrategyDefinition] = None
-    symbols: Optional[List[str]] = Field(default=None, max_length=3000)
-    start: Optional[date] = None
-    end: Optional[date] = None
-    commission_pct: Optional[float] = Field(default=None, ge=0, le=5)  # None → the market's cost model
-    slippage_pct: Optional[float] = Field(default=None, ge=0, le=5)
-    risk_per_trade_pct: float = Field(default=1.0, gt=0, le=10)
-    partial_at_t1: float = Field(default=0.5, ge=0, le=1)
-    max_hold_bars: Optional[int] = Field(default=None, ge=1, le=120)
-    walk_forward: bool = True
-    train_years: float = Field(default=3, ge=0.5, le=15)
-    test_years: float = Field(default=1, ge=0.25, le=5)
-    grid: Optional[Dict[str, List[float]]] = None
-
-    @field_validator("grid")
-    @classmethod
-    def _grid(cls, v):
-        if v is None:
-            return v
-        bad = set(v) - _LEVEL_FIELDS
-        if bad:
-            raise ValueError(f"Grid keys must be level parameters: {sorted(_LEVEL_FIELDS)}")
-        if sum(len(x) for x in v.values()) > 12:
-            raise ValueError("Grid too large (max 12 values in total)")
-        return v
 
 
 class ScoringSettingsIn(BaseModel):

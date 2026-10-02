@@ -7,7 +7,7 @@ import { Card, Confirm, DataStamp, DirectionBadge, Disclaimer, EmptyState, Error
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { WATCHLIST_TAGS } from "@/lib/constants";
-import { moveClass, num, price, px, signedPct } from "@/lib/format";
+import { moveClass, num, price, signedPct } from "@/lib/format";
 import type { Watchlist, WatchlistItem } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
@@ -70,7 +70,7 @@ function ItemRow({ wl, it, onChange }: { wl: Watchlist; it: WatchlistItem; onCha
         <div className="text-right">
           {it.quote ? (
             <>
-              <div className="num font-semibold">{it.market === "FX" ? px(it.quote.price, { fx: true }) : price(it.quote.price, it.currency ?? "INR")}</div>
+              <div className="num font-semibold">{price(it.quote.price, it.currency ?? "INR")}</div>
               <div className={cx("num text-xs", moveClass(it.quote.change_1d_pct))}>{signedPct(it.quote.change_1d_pct)}</div>
               <DataStamp asOf={it.quote.as_of} />
             </>

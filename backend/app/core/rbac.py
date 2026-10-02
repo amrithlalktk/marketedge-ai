@@ -11,8 +11,6 @@ PERMISSIONS = {
     "analysis:read": "View instrument analysis and charts",
     "watchlists:write": "Create and edit own watchlists",
     "watchlists:unlimited": "More than 3 watchlists",
-    "backtests:run": "Run backtests and walk-forward tests",
-    "strategies:manage": "Create and manage custom strategies",
     "admin:users": "Manage users and roles",
     "admin:settings": "Configure scoring weights, labels and thresholds",
     "admin:providers": "Manage data providers and API keys",
@@ -20,7 +18,6 @@ PERMISSIONS = {
     "audit:read": "Read audit logs",
     "options:read": "View NIFTY options market state, option chain, OI/IV analytics, payoff calculator",
     "options:signals": "View option setups and the options strategy engine",
-    "analyst:ask": "Ask the AI market analyst about setups and instruments",
     "portfolio:write": "Paper-trade and keep a trade journal",
     "portfolio:unlimited": "More than one paper portfolio",
     "alerts:write": "Create alerts and receive notifications",
@@ -28,11 +25,11 @@ PERMISSIONS = {
 }
 
 _STANDARD = ["market:read", "signals:read", "analysis:read", "watchlists:write", "options:read", "portfolio:write", "alerts:write"]
-_PREMIUM = _STANDARD + ["signals:read_all", "watchlists:unlimited", "backtests:run", "options:signals", "analyst:ask", "portfolio:unlimited", "alerts:unlimited"]
+_PREMIUM = _STANDARD + ["signals:read_all", "watchlists:unlimited", "options:signals", "portfolio:unlimited", "alerts:unlimited"]
 ROLES = {
     "standard": ("Standard user — basic analysis", _STANDARD),
     "premium": ("Premium user — advanced analysis and backtests", _PREMIUM),
-    "analyst": ("Analyst — creates and manages strategies", _PREMIUM + ["strategies:manage"]),
+    "analyst": ("Analyst — full access to setups", _PREMIUM),
     "admin": ("Administrator — full access", list(PERMISSIONS)),
 }
 DEFAULT_ROLE = "standard"

@@ -3,15 +3,11 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
-export type MarketId = "NSE" | "CRYPTO" | "US" | "EUROPE" | "ASIA" | "FX";
+export type MarketId = "NSE" | "CRYPTO";
 
 export const MARKETS: { id: MarketId; label: string; short: string; group: string }[] = [
   { id: "NSE", label: "Indian Stocks", short: "India", group: "INDIA" },
   { id: "CRYPTO", label: "Crypto", short: "Crypto", group: "CRYPTO" },
-  { id: "US", label: "US Stocks", short: "US", group: "GLOBAL" },
-  { id: "EUROPE", label: "Europe", short: "Europe", group: "GLOBAL" },
-  { id: "ASIA", label: "Asia", short: "Asia", group: "GLOBAL" },
-  { id: "FX", label: "Forex", short: "Forex", group: "FOREX" },
 ];
 
 export const MARKET_IDS = MARKETS.map((m) => m.id);
@@ -21,7 +17,6 @@ export const marketLabel = (m: string | null | undefined) => MARKETS.find((x) =>
 /** Wording for the "sector" dimension per market. */
 export function sectorWord(m: MarketId): { plural: string; singular: string } {
   if (m === "CRYPTO") return { plural: "Categories", singular: "Category" };
-  if (m === "FX") return { plural: "Groups", singular: "Group" };
   return { plural: "Sectors", singular: "Sector" };
 }
 
@@ -31,17 +26,13 @@ export function sectorWord(m: MarketId): { plural: string; singular: string } {
  */
 let defaultMarket: MarketId = "NSE";
 let enabled: MarketId[] | null = null; // null = all markets (until /markets has answered)
-let features: Set<string> | null = null; // null = every feature on
 
 /** Markets switched on for this installation (MARKETS_ENABLED), in display order. */
 export const enabledMarkets = () => MARKETS.filter((m) => !enabled || enabled.includes(m.id));
 export const marketOn = (m: MarketId) => !enabled || enabled.includes(m);
-/** Optional features (simple mode turns them off; see FEATURES_DISABLED). */
-export const featureOn = (name: "news" | "calendar" | "analyst" | "ml" | "analytics" | "backtest" | "strategies" | "options") =>
-  !features || features.has(name);
-export function setAppConfig(cfg: { markets?: string[]; features?: string[] }) {
-  if (cfg.markets) enabled = cfg.markets.filter(isMarket);
-  if (cfg.features) features = new Set(cfg.features);
+/** Called once with the market ids from GET /markets (MARKETS_ENABLED on the backend). */
+export function setEnabledMarkets(ids: string[]) {
+  enabled = ids.filter(isMarket);
 }
 export const getDefaultMarket = () => defaultMarket;
 export function setDefaultMarket(m: string | null | undefined) {

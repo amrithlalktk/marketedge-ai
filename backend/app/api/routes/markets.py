@@ -39,7 +39,7 @@ def _need(snap, what):
     return snap
 
 
-MARKET_Q = Query(None, pattern="^(NSE|CRYPTO|US|EUROPE|ASIA|FX)$")
+MARKET_Q = Query(None, pattern="^(NSE|CRYPTO)$")
 
 
 @router.get("", dependencies=[Depends(require("market:read"))])
@@ -61,8 +61,7 @@ def list_markets(db: Session = Depends(get_db)):
     ids = [m["id"] for m in out]
     pref = get_settings().default_market
     default = pref if pref in ids else next((m["id"] for m in out if not m["sample_provider"]), ids[0] if ids else "NSE")
-    known = ["news", "calendar", "analyst", "ml", "analytics", "backtest", "strategies", "options"]
-    return {"items": out, "default_market": default, "features": [f for f in known if get_settings().feature_on(f)]}
+    return {"items": out, "default_market": default}
 
 
 @router.get("/global-overview", dependencies=[Depends(require("market:read"))])

@@ -3,15 +3,15 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, alerts, analyst, analytics, auth, ml, news, notifications, portfolios, backtests, markets, options, risk, signals, stocks, strategies, upstox, watchlists
+from app.api.routes import admin, alerts, auth, markets, notifications, options, portfolios, risk, signals, stocks, upstox, watchlists
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
-from app.core.observability import RequestContextMiddleware, configure_logging, init_sentry, metrics_allowed, metrics_payload, readiness
+from app.core.observability import RequestContextMiddleware, configure_logging, init_sentry, readiness
 from app.core.rbac import seed_rbac
 from engine import ENGINE_VERSION
 
@@ -81,12 +81,8 @@ def create_app() -> FastAPI:
                        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
                        expose_headers=["X-Request-ID"])
     app.add_middleware(RequestContextMiddleware)  # outermost: request id + access log + HTTP metrics
-    optional = {"strategies": strategies, "backtest": backtests, "options": options, "analytics": analytics, "news": news, "analyst": analyst, "ml": ml}
-    for r in (auth, markets, stocks, signals, watchlists, risk, portfolios, alerts, notifications, admin, upstox):
+    for r in (auth, markets, stocks, signals, watchlists, risk, options, portfolios, alerts, notifications, admin, upstox):
         app.include_router(r.router, prefix=s.api_prefix)
-    for name, r in optional.items():  # simple mode: switched-off features are not served at all
-        if s.feature_on(name) or (name == "news" and s.feature_on("calendar")):
-            app.include_router(r.router, prefix=s.api_prefix)
     app.include_router(signals.market_router, prefix=s.api_prefix)
 
     @app.get("/health", tags=["meta"])
@@ -99,13 +95,6 @@ def create_app() -> FastAPI:
         """Readiness: database reachable, migrations at head, Redis reachable."""
         r = readiness()
         return JSONResponse(r, status_code=200 if r["ready"] else 503)
-
-    @app.get("/metrics", tags=["meta"], include_in_schema=False)
-    def metrics(authorization: str = Header(default="")):
-        if not metrics_allowed(authorization):
-            raise HTTPException(status_code=404)  # indistinguishable from "no such endpoint"
-        body, ctype = metrics_payload()
-        return Response(body, media_type=ctype)
 
     return app
 

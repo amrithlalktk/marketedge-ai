@@ -23,10 +23,9 @@ def market_config(market: str) -> MarketConfig:
     p = profile(market)
     if market == "NSE":
         return MarketConfig(market, p, s.benchmark_symbol, s.vix_symbol, s.market_data_provider)
-    bench = {"CRYPTO": s.benchmark_crypto, "US": s.benchmark_us, "EUROPE": s.benchmark_europe, "ASIA": s.benchmark_asia, "FX": s.benchmark_fx}[market]
-    vix = s.vix_us if market == "US" else None
-    prov = s.crypto_data_provider if market == "CRYPTO" else s.fx_data_provider if market == "FX" else s.global_data_provider
-    return MarketConfig(market, p, bench, vix, prov)
+    if market == "CRYPTO":
+        return MarketConfig(market, p, s.benchmark_crypto, None, s.crypto_data_provider)
+    raise ValueError(f"Unknown market {market!r}")
 
 
 def enabled_markets() -> List[str]:

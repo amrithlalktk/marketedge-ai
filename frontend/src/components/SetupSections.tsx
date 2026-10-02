@@ -1,14 +1,14 @@
 "use client";
 
-import { COMPONENT_LABELS, CONTEXT_COMPONENTS } from "@/lib/constants";
+import { COMPONENT_LABELS, CONTEXT_COMPONENTS, RETIRED_COMPONENTS } from "@/lib/constants";
 import { useEngineWeights } from "@/lib/weights";
-import { dateTime, humanize, isFx, num, pct, period, price, px, rr, signedPct, moveClass } from "@/lib/format";
+import { dateTime, humanize, num, pct, period, price, px, rr, signedPct, moveClass } from "@/lib/format";
 import type { Check, Components, Explanation, HistoricalExample, MTF, Probability, SetupDetail } from "@/lib/types";
 import { Bar, Card, EmptyState, Pill, Stat, TableWrap, cx } from "./ui";
 
 export function LevelsPanel({ s }: { s: SetupDetail }) {
   const cur = s.currency;
-  const o = { fx: isFx(s.market), ref: s.current_price };
+  const o = { ref: s.current_price };
   const rows: { k: string; v: string; method: string; cls?: string; extra?: string }[] = [
     { k: "Entry zone", v: `${price(s.entry_zone[0], cur, o)} – ${price(s.entry_zone[1], cur, o)}`, method: s.entry_method },
     { k: "Stop", v: price(s.stop, cur, o), method: s.stop_method, cls: "text-down", extra: `Risk ${pct(s.risk_pct, 2)} · ATR ${px(s.atr, o)}` },
@@ -42,7 +42,7 @@ export function LevelsPanel({ s }: { s: SetupDetail }) {
 export function ScoreBreakdown({ components, score, label, notes }: { components: Components; score: number; label: string; notes?: string[] }) {
   const weights = useEngineWeights();
   const keys = Object.keys(COMPONENT_LABELS).filter((k) => k in components);
-  const extra = Object.keys(components).filter((k) => !(k in COMPONENT_LABELS));
+  const extra = Object.keys(components).filter((k) => !(k in COMPONENT_LABELS) && !RETIRED_COMPONENTS.includes(k));
   return (
     <Card title="Score breakdown" right={<span className="num text-sm font-semibold">{num(score, 1)} · {label}</span>}>
       <ul className="space-y-2">
@@ -55,14 +55,14 @@ export function ScoreBreakdown({ components, score, label, notes }: { components
                 {weights && weights[k] != null && <span className="block text-[10px]">{weights[k] === 0 ? "weight 0 (not in score)" : `weight ${weights[k]}`}</span>}
                 {!weights && CONTEXT_COMPONENTS.includes(k) && <span className="block text-[10px]">shown for context</span>}
               </span>
-              {v == null ? <span className="text-[11px] italic text-muted">{k === "ml" ? "no active model" : "unavailable"}</span> : <Bar value={v} tone={CONTEXT_COMPONENTS.includes(k) ? "blue" : undefined} />}
+              {v == null ? <span className="text-[11px] italic text-muted">unavailable</span> : <Bar value={v} tone={CONTEXT_COMPONENTS.includes(k) ? "blue" : undefined} />}
               <span className="num text-right">{v == null ? "—" : num(v, 0)}</span>
             </li>
           );
         })}
       </ul>
       {keys.some((k) => CONTEXT_COMPONENTS.includes(k)) && (
-        <p className="mt-2 text-[11px] text-muted">“Historical evidence” summarises the empirical hit-rate record; “ML estimate” is a validated model probability (only when a model is active). Both are shown for context and count toward the score only if an administrator assigns them weight.</p>
+        <p className="mt-2 text-[11px] text-muted">“Historical evidence” summarises the empirical hit-rate record. It is shown for context and counts toward the score only if an administrator assigns it weight.</p>
       )}
       {notes && notes.length > 0 && (
         <ul className="mt-2 space-y-0.5 text-[11px] text-muted">
@@ -224,7 +224,7 @@ export function ProbabilityPanel({ p, strategyRules }: { p: Probability; strateg
   );
 }
 
-export function ExamplesTable({ rows, currency, fx = false }: { rows: HistoricalExample[]; currency?: string; fx?: boolean }) {
+export function ExamplesTable({ rows, currency }: { rows: HistoricalExample[]; currency?: string }) {
   return (
     <Card title="Historical similar examples">
       {rows.length === 0 ? (
@@ -244,10 +244,10 @@ export function ExamplesTable({ rows, currency, fx = false }: { rows: Historical
                 <tr key={`${r.symbol}-${r.signal_date}`}>
                   <td className="num whitespace-nowrap">{r.signal_date}</td>
                   <td className="font-mono">{r.symbol}</td>
-                  <td className="num text-right">{price(r.entry, currency, { fx, ref: r.entry })}</td>
-                  <td className="num text-right text-down">{px(r.stop, { fx, ref: r.entry })}</td>
-                  <td className={cx("num text-right", r.t1_hit && "text-up")}>{px(r.t1, { fx, ref: r.entry })}{r.t1_hit && " ✓"}</td>
-                  <td className={cx("num text-right", r.t2_hit && "text-up")}>{px(r.t2, { fx, ref: r.entry })}{r.t2_hit && " ✓"}</td>
+                  <td className="num text-right">{price(r.entry, currency, { ref: r.entry })}</td>
+                  <td className="num text-right text-down">{px(r.stop, { ref: r.entry })}</td>
+                  <td className={cx("num text-right", r.t1_hit && "text-up")}>{px(r.t1, { ref: r.entry })}{r.t1_hit && " ✓"}</td>
+                  <td className={cx("num text-right", r.t2_hit && "text-up")}>{px(r.t2, { ref: r.entry })}{r.t2_hit && " ✓"}</td>
                   <td className="num whitespace-nowrap">{r.exit_date}</td>
                   <td><Pill tone={r.exit_reason === "stop" ? "red" : r.t1_hit ? "green" : "slate"}>{r.exit_reason}</Pill></td>
                   <td className={cx("num text-right", moveClass(r.net_return_pct))}>{signedPct(r.net_return_pct)}</td>

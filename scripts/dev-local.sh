@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../backend"
 [ -d .venv ] || { python3 -m venv .venv && ./.venv/bin/pip install -q -r requirements-dev.txt; }
-export ENVIRONMENT=development DATABASE_URL="sqlite:///./dev.db" REDIS_URL="" CELERY_ALWAYS_EAGER=true \
+export ENVIRONMENT=development DATABASE_URL="sqlite:///./dev.db" REDIS_URL="" JOB_RUNNER=inline \
        MARKET_DATA_PROVIDER=sample SECRET_KEY="dev-only-secret-key-please-change-0123456789"
 if [ ! -f dev.db ]; then
   ./.venv/bin/python -c "from app.core.db import Base, engine; import app.models; Base.metadata.create_all(engine)"

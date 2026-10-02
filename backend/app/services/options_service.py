@@ -1,5 +1,5 @@
 """NIFTY options: chain ingestion (provider → DB) and analysis (DB → engine → snapshots/signals).
-Runs in workers; API endpoints read the persisted results."""
+Runs in the daily job; API endpoints read the persisted results."""
 from __future__ import annotations
 
 import logging
@@ -156,12 +156,7 @@ def run_options(db: Session, today: Optional[date] = None) -> ScanRun:
                                                                     .order_by(OptionIVHistory.as_of))}, dtype=float)
         meta = _chain_meta(chain_df, ts, und.is_sample, today, cfg.validation.max_staleness_days)
         chain_cfg = ch.ChainConfig(r=s.risk_free_rate, q=s.dividend_yield)
-        from datetime import timedelta as _td
-
-        from app.services.events_service import economic_events
-        from engine.events import relevant_events
-
-        evs = relevant_events(economic_events(db, ts - _td(hours=1), ts + _td(days=60)), "NFO", {"INR"})
+        evs = []  # no economic calendar in the lite build
         out = analyze_options(analyzer=analyzer, symbol=und.symbol, display_name=s.options_display_name, index_features=fi, events=events,
                               ctx=ctx, chain_raw=chain_df.drop(columns=["spot", "source", "lot_size"]), spot=spot, as_of=ts.astimezone(ch_ist()),
                               lot_size=lot, iv_history=ivh if len(ivh) else None, intraday_5m=m5, today=today, chain_meta=meta, prev_ltp=prev_ltp,

@@ -65,9 +65,7 @@ def analyze_options(*, analyzer: Analyzer, symbol: str, display_name: str, index
     regime_mask = (reg_df["family"] == ctx.regime_now["family"]) if ctx.regime_now is not None and not reg_df.empty else None
     trading_days = pd.bdate_range(as_of.date(), max(expiries)) if expiries else []
     sessions_to = {e: max(int(((trading_days > pd.Timestamp(as_of.date())) & (trading_days <= pd.Timestamp(e))).sum()), 1) for e in expiries}
-    from ..events import EventRiskConfig, macro_checks, upcoming_summary
-
-    macro_events = macro_events or []
+    macro_events = macro_events or []  # no economic calendar in the lite build: event gating is a no-op
     high_before = {}
     for e in expiries:
         exp_end = pd.Timestamp(datetime.combine(e, datetime.min.time()).replace(hour=10), tz="UTC")  # 15:30 IST
@@ -77,12 +75,6 @@ def analyze_options(*, analyzer: Analyzer, symbol: str, display_name: str, index
         high_before[e] = list(dict.fromkeys(names))
     strategies = build_strategies(c, spot, state, ivp, atm_by_exp, ctx.regime_now, oi, und, lot_size, chain_cfg,
                                   index_features["close"], regime_mask, sessions_to, high_before)
-    erc = EventRiskConfig()
-    for st in setups:  # index/option setups are macro-sensitive: high-impact release within 24h blocks
-        mc = [c.to_dict() for c in macro_checks(macro_events, as_of, True, erc)]
-        st.setdefault("checks", []).extend(mc)
-        if st.get("status") == "VALID" and any(c["severity"] == "block" for c in mc):
-            st["status"] = "NO_TRADE"
 
     def chain_rows(e):
         sub = c[c["expiry"] == e]
@@ -130,7 +122,8 @@ def analyze_options(*, analyzer: Analyzer, symbol: str, display_name: str, index
         "strategies": strategies,
         "status": status,
         "market_message": None if status == "VALID" else "NO TRADE: no option setup passed every underlying and contract check.",
-        "events": {"upcoming": upcoming_summary(macro_events, as_of, 10), "high_impact_before_expiry": {str(k): v for k, v in high_before.items() if v}},
+        "events": {"upcoming": [], "high_impact_before_expiry": {str(k): v for k, v in high_before.items() if v},
+                   "note": "No economic calendar configured: macro-event risk before expiry is not checked."},
         "config": {"chain": chain_cfg.__dict__, "selector": opt_cfg.to_dict()},
         "data": chain_meta,
         "disclaimer": OPTIONS_DISCLAIMER,

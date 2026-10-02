@@ -95,8 +95,6 @@ export interface Overview {
   breadth: Breadth | null;
   scan: ScanSummary | null;
   coverage?: Record<string, string>;
-  regime_ml?: MlRegime | null;
-  ml_model?: { model_id: number; version: number; algo: string } | null;
   profile?: unknown;
   btc_dominance_pct?: number | null;
   btc_dominance_basis?: string;
@@ -115,20 +113,6 @@ export interface MarketInfo {
   /** true when the market's configured provider is the synthetic SAMPLE provider (not a data flag: does not raise the banner) */
   sample_provider?: boolean;
 }
-export interface GlobalMarket {
-  cards: IndexCard[];
-  regime: Regime | null;
-  is_sample?: boolean;
-  profile?: unknown;
-  scan: ScanSummary | null;
-  btc_dominance_pct?: number | null;
-  btc_dominance_basis?: string;
-  stablecoin_flows?: { available: boolean; note: string };
-}
-export interface GlobalOverview {
-  markets: Record<string, GlobalMarket>;
-  disclaimer: string;
-}
 export interface InrBlock {
   available?: boolean;
   note: string;
@@ -143,16 +127,6 @@ export interface InrBlock {
   reward_t2_per_unit_inr?: number;
   example?: { risk_budget_inr: number; units: number; position_value_inr: number; reward_t2_inr: number };
 }
-export interface PipsBlock {
-  pip_size: number;
-  stop_pips: number;
-  t1_pips: number;
-  t2_pips: number;
-  standard_lot_units: number;
-  example_lots: number | null;
-  rate_differential: { available: boolean; note: string };
-  macro_calendar: { available: boolean; note: string; upcoming?: EconomicEvent[] };
-}
 export interface DerivativesBlock {
   available: boolean;
   as_of?: string;
@@ -164,11 +138,7 @@ export interface DerivativesBlock {
   checks?: Check[];
 }
 export interface MarketExtras {
-  ml?: SetupMl | null;
-  events?: { upcoming: EconomicEvent[]; note: string } | null;
-  news?: { window_days: number; articles: number; counts: Record<string, number>; net_score: number | null; latest: NewsItem[]; note: string; checks?: Check[] } | null;
   inr?: InrBlock;
-  pips?: PipsBlock;
   derivatives?: DerivativesBlock;
   market_cap_usd?: number | null;
   spread_bps?: number | null;
@@ -479,7 +449,7 @@ export interface Analysis {
   disclaimer: string;
 }
 
-// ---------------------------------------------------------------- strategies / backtests
+// ---------------------------------------------------------------- built-in strategy performance
 export interface HitRates {
   sample_size: number;
   t1_hits?: number;
@@ -521,307 +491,15 @@ export interface StrategyDisabledInfo {
   by: number | null;
   at: string;
 }
-export interface BuiltinStrategy extends StrategyPublic {
-  builtin: true;
-  performance: StrategyPerformance | null;
-  /** markets where this strategy is switched off for live setups (still backtested) */
-  disabled_markets?: Record<string, StrategyDisabledInfo>;
+/** GET /admin/strategies — built-in strategies with their stored backtest performance and per-market switch. */
+export interface AdminStrategy extends StrategyPublic {
+  performance: Pick<StrategyPerformance, "backtest_period" | "trades" | "t1_hit_rate" | "stop_rate" | "profit_factor" | "expectancy_r" | "segments" | "warnings"> | null;
+  /** set when the strategy is switched off for live setups in this market (it is still backtested) */
+  disabled: StrategyDisabledInfo | null;
 }
-export interface StrategyVersionMeta {
-  version: number;
-  note: string;
-  created_at: string;
-  created_by?: number | null;
-}
-export interface CustomStrategy extends StrategyPublic {
-  builtin: false;
-  definition: StrategyDefinitionV2;
-  is_active: boolean;
-  include_in_scan: boolean;
-  current_version: number;
-  owner_id?: number | null;
-  versions: StrategyVersionMeta[];
-  performance: StrategyPerformance | null;
-}
-export interface StrategiesResponse {
-  builtin: BuiltinStrategy[];
-  custom: CustomStrategy[];
-  allowed_features: string[];
-  operators: string[];
-  dsl?: { operand: string; any_of: string; exits: Record<string, unknown> };
-}
-/** DSL v2 operand: number | feature name | {feature, mult (0.01–100), shift (0–20 bars ago)}. */
-export type Operand = number | string | { feature: string; mult?: number; shift?: number };
-export interface ConditionV2 {
-  left: Operand;
-  op: string;
-  right: Operand;
-}
-export interface Exits {
-  stop_method?: "structure" | "atr";
-  atr_stop_mult?: number;
-  t1_r?: number;
-  t2_r?: number;
-  max_hold_bars?: number;
-}
-export interface StrategyDefinitionV2 {
-  name: string;
-  direction: Direction;
-  conditions: ConditionV2[];
-  any_of?: ConditionV2[][];
-  exits?: Exits;
-  max_hold_bars?: number;
-}
-export interface ValidateOut {
-  valid: boolean;
-  error?: string;
-  rules?: string[];
-  description?: string;
-  stop_rule?: string;
-  target_rule?: string;
-  max_hold_bars?: number;
-  entry_rule?: string;
-}
-export interface StrategyVersionDetail {
-  key: string;
-  version: number;
-  definition: StrategyDefinitionV2;
-  note: string;
-  created_at: string;
-}
-export interface PortfolioIn {
-  initial_capital: number;
-  max_positions: number;
-  max_position_pct: number;
-  max_sector_pct?: number;
-}
-export interface ConditionIn {
-  left: string | number;
-  op: string;
-  right: string | number;
-}
-export interface BacktestIn {
-  market?: string;
-  strategy_key?: string;
-  strategy_version?: number;
-  portfolio?: PortfolioIn;
-  definition?: StrategyDefinitionV2;
-  start?: string;
-  end?: string;
-  commission_pct?: number;
-  slippage_pct?: number;
-  risk_per_trade_pct: number;
-  partial_at_t1: number;
-  max_hold_bars?: number;
-  walk_forward: boolean;
-  train_years?: number;
-  test_years?: number;
-}
-export interface BacktestSummary extends HitRates {
-  total_trades?: number;
-  winning_trades?: number;
-  losing_trades?: number;
-  win_rate?: number;
-  profit_factor?: number | null;
-  expectancy_pct?: number;
-  best_trade?: { symbol: string; signal_date: string; net_return_pct: number };
-  worst_trade?: { symbol: string; signal_date: string; net_return_pct: number };
-  cagr_pct?: number;
-  total_return_pct?: number;
-  max_drawdown_pct?: number;
-  sharpe?: number | null;
-  sortino?: number | null;
-  risk_per_trade_pct?: number;
-  equity_curve?: [string, number][];
-  monthly_returns?: Record<string, number>;
-  yearly_returns?: Record<string, number>;
-}
-export interface WalkForwardFold {
-  train: Pair<string>;
-  test: Pair<string>;
-  params: Record<string, number>;
-  in_sample: HitRates;
-  out_of_sample: HitRates;
-}
-export interface BacktestResult {
-  strategy: StrategyPublic;
-  universe_size: number;
-  period: Pair<string>;
-  costs: Record<string, number>;
-  risk_per_trade_pct: number;
-  partial_at_t1: number;
-  summary: BacktestSummary;
-  segments: Record<string, HitRates>;
-  by_regime: Record<string, HitRates>;
-  monte_carlo: {
-    runs: number;
-    note?: string;
-    total_return_pct?: { p5: number; p50: number; p95: number };
-    max_drawdown_pct?: { p5: number; p50: number; p95: number };
-    prob_loss_pct?: number;
-  };
-  is_sample_data: boolean;
-  methodology: Record<string, string>;
-  walk_forward?: { folds: WalkForwardFold[]; out_of_sample_combined: HitRates; grid: Record<string, number[]> };
-  sensitivity?: {
-    results: { params: Record<string, number>; trades: number; expectancy_r: number | null; t1_hit_rate: number | null }[];
-    expectancy_std?: number | null;
-    positive_share?: number | null;
-  };
-  warnings: string[];
-  yearly_stability?: { years: (HitRates & { year: string })[]; positive_years: number; years_evaluated: number };
-  portfolio?: PortfolioResult | null;
-}
-export interface PortfolioTrade {
-  symbol: string;
-  strategy_id: string;
-  direction: Direction;
-  entry_date: string;
-  exit_date: string;
-  entry_px: number;
-  exit_px: number;
-  qty: number;
-  exit_reason: string;
-  pnl: number;
-  costs: number;
-  return_pct: number;
-}
-export interface PortfolioResult {
-  currency?: string; // account currency (INR/USD) or "MIXED" when some conversion was unavailable
-  fx_conversion?: { applied: boolean; account_currency: string; pairs: Record<string, string[]>; missing: string[]; note: string };
-  config: { initial_capital: number; risk_per_trade_pct: number; max_positions: number; max_position_pct: number; max_sector_pct: number | null; partial_at_t1: number; commission_pct: number; slippage_pct: number };
-  period: Pair<string>;
-  final_equity: number;
-  total_return_pct: number;
-  cagr_pct: number | null;
-  max_drawdown_pct: number | null;
-  sharpe: number | null;
-  sortino: number | null;
-  trades_taken: number;
-  trades_available: number;
-  skipped: Record<string, number>;
-  win_rate: number | null;
-  profit_factor: number | null;
-  avg_win: number | null;
-  avg_loss: number | null;
-  expectancy_per_trade: number | null;
-  total_costs: number;
-  turnover: number;
-  avg_exposure_pct: number | null;
-  max_concurrent_positions: number;
-  equity_curve: [string, number][];
-  drawdown_curve: [string, number][];
-  exposure_curve: [string, number, number][];
-  monthly_returns: Record<string, number>;
-  yearly_returns: Record<string, number>;
-  benchmark: { total_return_pct: number | null; curve: [string, number][] } | null;
-  trade_log: PortfolioTrade[];
-  trade_log_total?: number;
-  trade_log_truncated?: boolean;
-  open_at_end: number;
-  method: string;
-}
-export interface CompareItem {
-  id: number;
-  strategy: string | null;
-  strategy_key: string;
-  strategy_version_id: number | null;
-  strategy_version: number | null;
-  period: Pair<string> | null;
-  universe_size: number | null;
-  trades: number | null;
-  win_rate: number | null;
-  t1_hit_rate: number | null;
-  stop_rate: number | null;
-  profit_factor: number | null;
-  expectancy_r: number | null;
-  oos_expectancy_r: number | null;
-  oos_trades: number | null;
-  wf_oos_expectancy_r: number | null;
-  portfolio_cagr_pct: number | null;
-  portfolio_max_dd_pct: number | null;
-  portfolio_sharpe: number | null;
-  trades_skipped: number | null;
-  positive_years: number | null;
-  years_evaluated: number | null;
-  warnings: string[];
-  costs: Record<string, number> | null;
-}
-export interface HistBin {
-  from: number;
-  to: number;
-  count: number;
-}
-export interface HitRateExplore {
-  filters: Record<string, string>;
-  group_by: string | null;
-  overall: HitRates;
-  groups: (HitRates & { key: string })[];
-  distributions: {
-    r_multiple?: HistBin[];
-    mfe_r?: HistBin[];
-    mae_r?: HistBin[];
-    bars_held?: HistBin[];
-    pct_reaching_1r_mfe?: number;
-    pct_heat_over_0_5r?: number;
-  };
-  period: Pair<string> | null;
-  note: string;
-  scan_run_id: number;
-  as_of: string;
-  groupings: string[];
-  definitions: Record<string, string>;
-}
-export interface Backtest {
-  id: number;
-  status: "queued" | "running" | "done" | "failed";
-  params: Record<string, unknown>;
-  result: BacktestResult | null;
-  error: string | null;
-  created_at: string;
-  finished_at: string | null;
-  disclaimer: string;
-}
-export interface BacktestListItem {
-  id: number;
-  strategy_key: string;
-  strategy_version: number | null;
-  has_portfolio: boolean;
-  status: string;
-  created_at: string;
-  finished_at: string | null;
-  trades: number | null;
-  expectancy_r: number | null;
-  error: string | null;
-}
-export interface BacktestTrade {
-  id: number;
-  symbol: string;
-  strategy_key: string;
-  direction: Direction;
-  signal_date: string;
-  entry_date: string;
-  exit_date: string;
-  entry: number;
-  stop: number;
-  t1: number;
-  t2: number;
-  exit_price: number;
-  exit_reason: string;
-  t1_hit: boolean;
-  t2_hit: boolean;
-  stop_hit: boolean;
-  neither: boolean;
-  bars_held: number;
-  gross_return_pct: number;
-  net_return_pct: number;
-  r_multiple: number;
-  mfe_r: number | null;
-  mae_r: number | null;
-  rr_t2_planned: number | null;
-  regime: string | null;
-  score_at_signal: number | null;
-  score_bucket: string | null;
+export interface AdminStrategies {
+  market: string;
+  items: AdminStrategy[];
 }
 
 // ---------------------------------------------------------------- watchlists
@@ -897,8 +575,9 @@ export interface AdminHealth {
   } | null;
   failed_jobs: number;
   readiness?: { ready: boolean; checks: Record<string, string> };
-  queues?: Record<string, number>;
 }
+/** Admin job start: the local inline runner returns a job id; on Vercel a GitHub Actions workflow is dispatched instead. */
+export type JobStart = { job_id: number; status?: string; dispatched?: false } | { dispatched: true; actions_url?: string | null };
 export interface Job {
   id: number;
   kind: string;
@@ -942,7 +621,8 @@ export interface AuditLog {
 }
 export interface Providers {
   market_data: { active: string; available: string[] };
-  fundamentals: { active: string; available: string[] };
+  options: { active: string; available: string[] };
+  crypto: { active: string; available: string[] };
   api_keys: { id: number; provider: string; name: string; enabled: boolean; created_at: string }[];
   status: DataSourceStatus[];
 }
@@ -1020,7 +700,6 @@ export interface OptionsOverview {
   iv: OptIV;
   expected_move: { expiry: string; straddle_price: number | null; iv_1sd_to_expiry: number | null; iv_1sd_1day: number | null };
   oi: OptOI;
-  events?: { upcoming: EconomicEvent[]; high_impact_before_expiry: Record<string, string[]> } | null;
   liquidity: { liquid_contracts: number; total_contracts: number; filters: Record<string, number> };
   expiries: string[];
   status: "VALID" | "NO_TRADE";
@@ -1245,202 +924,6 @@ export interface PayoffOut extends StructureMetrics {
   lot_size: number;
   as_of: string;
   disclaimer: string;
-}
-
-// ---------------------------------------------------------------- news, calendars, AI analyst (Phase 5)
-export type SentimentLabel = "Positive" | "Neutral" | "Negative";
-export interface NewsItem {
-  id: number;
-  title: string;
-  summary?: string | null;
-  url: string | null;
-  source: string;
-  published_at: string;
-  symbols?: string[];
-  markets?: string[];
-  sentiment_label: SentimentLabel;
-  sentiment_score?: number | null;
-  sentiment_method?: string;
-  sentiment_terms?: { positive: string[]; negative: string[] };
-  category: string;
-  is_sample?: boolean;
-  provider?: string;
-}
-export interface EconomicEvent {
-  id?: number;
-  event_time: string;
-  country: string;
-  currency?: string;
-  name: string;
-  category?: string;
-  impact: "Low" | "Medium" | "High";
-  actual?: number | null;
-  forecast?: number | null;
-  previous?: number | null;
-  unit?: string | null;
-  source?: string;
-  is_sample?: boolean;
-  surprise?: number | null;
-  hours_until?: number | null;
-}
-export interface EarningsEvent {
-  symbol: string;
-  event_date: string;
-  period: string;
-  time: "bmo" | "amc" | string | null;
-  eps_estimate: number | null;
-  eps_actual: number | null;
-  eps_surprise_pct: number | null;
-  revenue_estimate: number | null;
-  revenue_actual: number | null;
-  revenue_surprise_pct: number | null;
-  guidance: string | null;
-  reported: boolean;
-  source?: string;
-  is_sample?: boolean;
-  days_until?: number;
-  warning?: string | null;
-}
-export interface SetupEvents {
-  upcoming: EconomicEvent[];
-  note: string;
-}
-export interface SetupNews {
-  window_days: number;
-  articles: number;
-  counts: Record<SentimentLabel, number>;
-  net_score: number | null;
-  latest: NewsItem[];
-  note: string;
-  checks?: Check[];
-}
-export interface StockEvents {
-  symbol: string;
-  market: string;
-  next_earnings: EarningsEvent | null;
-  earnings_history: EarningsEvent[];
-  earnings_reaction: { count: number; avg_abs_move_pct: number | null; max_abs_move_pct: number | null; up_moves: number; typical_2d_move_pct: number | null; vs_typical: number | null; note: string } | null;
-  economic_events: EconomicEvent[];
-  news: NewsItem[];
-  notes: Record<string, string>;
-}
-export interface AnalystAnswer {
-  id: number;
-  mode: "llm" | "rule_based";
-  model: string | null;
-  answer: string;
-  grounded: boolean;
-  unverified_numbers: string[];
-  note: string;
-  usage: { input_tokens?: number; output_tokens?: number; [k: string]: unknown };
-  context_used: { keys: string[]; signal_id: number | null; symbol: string | null };
-  grounding_note: string;
-  disclaimer: string;
-}
-export interface AnalystHistoryItem {
-  id: number;
-  question: string;
-  answer: string;
-  mode: string;
-  model: string | null;
-  grounded: boolean;
-  unverified_numbers: string[] | null;
-  signal_id: number | null;
-  symbol: string | null;
-  created_at: string;
-}
-
-// ---------------------------------------------------------------- ML layer (Phase 6)
-export interface MlMetrics {
-  n: number;
-  base_rate: number;
-  brier: number;
-  log_loss: number;
-  auc: number | null;
-  mean_predicted: number;
-}
-export interface MlGate {
-  eligible: boolean;
-  reasons: string[];
-}
-export interface MlModelSummary {
-  id: number;
-  market: string;
-  target?: string;
-  algo: string;
-  version: number;
-  status: "candidate" | "active" | "retired" | "suspended" | string;
-  eligible: boolean;
-  gate: MlGate | null;
-  oos_model: MlMetrics | null;
-  oos_baseline: MlMetrics | null;
-  n_events: number | null;
-  period: Pair<string> | null;
-  is_sample_data: boolean;
-  created_at: string;
-  activated_at: string | null;
-  engine_version?: string;
-}
-export interface ReliabilityBin {
-  bin: Pair;
-  mean_predicted: number;
-  observed_rate: number;
-  count: number;
-}
-export interface MlFold {
-  train_end: string;
-  calib: Pair<string>;
-  test: Pair<string>;
-  n_train: number;
-  n_calib: number;
-  model: MlMetrics;
-  baseline: MlMetrics;
-}
-export interface MlAlgoResult {
-  folds: MlFold[];
-  oos: {
-    model: MlMetrics;
-    baseline: MlMetrics;
-    reliability_model: ReliabilityBin[];
-    reliability_baseline: ReliabilityBin[];
-    significance?: { mean_brier_diff: number; ci95: Pair; p_model_better: number; resamples: number } | null;
-  } | null;
-}
-export interface MlModelDetail extends MlModelSummary {
-  results: Record<string, MlAlgoResult> | null;
-  importance: { feature: string; brier_increase: number }[] | null;
-  config: Record<string, number> | null;
-  features: string[];
-  calibrated: boolean;
-  note: string;
-}
-export interface MlRegime {
-  available: boolean;
-  as_of?: string;
-  state?: string;
-  confidence?: number;
-  state_probabilities?: Record<string, number>;
-  states?: { name: string; mean_ret20_pct: number; mean_vol20_pct: number; mean_dist200_pct: number; share_of_history_pct: number }[];
-  recent_transitions?: { date: string; state: string }[];
-  rule_based_regime?: string | null;
-  agrees_with_rule_based?: boolean | null;
-  method?: string;
-  note?: string;
-  market?: string;
-}
-export interface SetupMl {
-  available: boolean;
-  note: string;
-  probability_t1_pct?: number;
-  model_id?: number;
-  version?: number;
-  algo?: string;
-  oos_brier?: number | null;
-  baseline_brier?: number | null;
-  oos_auc?: number | null;
-  oos_n?: number | null;
-  calibrated?: boolean;
-  empirical_t1_pct?: number | null;
 }
 
 // ---------------------------------------------------------------- paper trading, journal, alerts, notifications (Phase 7)

@@ -10,7 +10,6 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.cache import get_cache
 from app.core.config import get_settings
 from app.models import NotificationSetting
 from app.notify.channels import TelegramChannel
@@ -60,19 +59,3 @@ def handle_update(db: Session, update: dict, http: Optional[httpx.Client] = None
         except httpx.HTTPError:
             pass
     return s.user_id
-
-
-def poll_updates(db: Session, http: Optional[httpx.Client] = None) -> dict:
-    s = get_settings()
-    tok = TelegramChannel().token()
-    if not tok or s.telegram_webhook_secret:
-        return {"skipped": "no bot token" if not tok else "webhook mode"}
-    cache = get_cache()
-    offset = int(cache.get_json("tg:offset") or 0)
-    r = (http or httpx.Client(timeout=20)).get(f"https://api.telegram.org/bot{tok}/getUpdates", params={"offset": offset, "timeout": 0})
-    linked = 0
-    for u in r.json().get("result", []):
-        offset = max(offset, int(u["update_id"]) + 1)
-        linked += 1 if handle_update(db, u, http) else 0
-    cache.set_json("tg:offset", offset, ttl=30 * 86400)
-    return {"linked": linked, "offset": offset}

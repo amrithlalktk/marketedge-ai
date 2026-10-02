@@ -49,28 +49,10 @@ def test_ready_reports_checks(app_client):
     assert r.status_code == (200 if body["ready"] else 503)
 
 
-def test_metrics_open_outside_production_and_has_business_gauges(app_client, scanned):
-    r = app_client.get("/metrics")
-    assert r.status_code == 200
-    text = r.text
-    assert "marketedge_http_requests_total" in text
-    assert "marketedge_jobs_24h" in text
-    assert 'marketedge_scan_valid_setups{market="NSE"}' in text
 
 
-def test_metrics_token_required_when_set(app_client, monkeypatch):
-    monkeypatch.setattr(get_settings(), "metrics_token", "s3cret-metrics-token")
-    assert app_client.get("/metrics").status_code == 404
-    assert app_client.get("/metrics", headers={"Authorization": "Bearer wrong"}).status_code == 404
-    assert app_client.get("/metrics", headers={"Authorization": "Bearer s3cret-metrics-token"}).status_code == 200
 
 
-def test_metrics_disabled_in_production_without_token(monkeypatch):
-    from app.core.observability import metrics_allowed
-
-    monkeypatch.setattr(get_settings(), "environment", "production")
-    monkeypatch.setattr(get_settings(), "metrics_token", None)
-    assert metrics_allowed("") is False
 
 
 # ------------------------------------------------------------------ settings
@@ -91,8 +73,8 @@ def test_file_secrets(tmp_path, monkeypatch):
 def test_file_secret_missing_file_fails_loudly(monkeypatch):
     from app.core import config
 
-    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
-    monkeypatch.setenv("FINNHUB_API_KEY_FILE", "/nonexistent/secret")
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    monkeypatch.setenv("SMTP_PASSWORD_FILE", "/nonexistent/secret")
     with pytest.raises(FileNotFoundError):
         config._file_secrets()
 
@@ -157,26 +139,12 @@ def test_effective_workers_rules(monkeypatch):
 
 
 # ------------------------------------------------------------------ queues / retention
-def test_task_routing():
-    from app.workers.celery_app import celery
-
-    route = lambda name: celery.amqp.router.route({}, name)["queue"].name  # noqa: E731
-    assert route("app.workers.tasks.scan") == "scans"
-    assert route("app.workers.tasks.ingest_and_scan") == "scans"
-    assert route("app.workers.tasks.backtest") == "backtests"
-    assert route("app.workers.tasks.ml_train") == "backtests"
-    assert route("app.workers.tasks.alerts_tick") == "notifications"
-    assert route("app.workers.tasks.news") == "default"
-    assert route("app.workers.tasks.retention_cleanup") == "default"
-    # every task scheduled by beat is registered
-    for entry in celery.conf.beat_schedule.values():
-        assert entry["task"] in celery.tasks, entry["task"]
 
 
 def test_retention_cleanup(app_client):
     from app.core.db import SessionLocal
     from app.models import AuditLog, Job
-    from app.workers.tasks import retention_cleanup_db
+    from app.jobs import retention as retention_cleanup_db
 
     db = SessionLocal()
     try:
@@ -228,7 +196,7 @@ def test_scan_prewarms_and_candles_cache_tracks_last_bar(app_client, admin_heade
 def test_admin_health_includes_readiness_and_queues(app_client, admin_headers):
     d = app_client.get("/api/v1/admin/health", headers=admin_headers).json()
     assert d["readiness"]["checks"]["database"] == "ok"
-    assert isinstance(d["queues"], dict)  # {} without a Redis broker (tests), per-queue depth otherwise
+    assert "queues" not in d  # no queue in the serverless build
 
 
 # ------------------------------------------------------------------ sample → live switch
@@ -263,41 +231,6 @@ def test_switching_market_to_live_provider_deactivates_sample_instruments(app_cl
         db.close()
 
 
-def test_live_setups_ignore_sample_calendar_news_and_fx(app_client):
-    from app.core.db import SessionLocal
-    from app.models import EconomicEvent
-    from app.services.scan_service import enrich_setups
-
-    class SampleFx:
-        def convert(self, a, b):
-            return {"rate": 83.0, "path": ["DEMO_USDINR"], "as_of": "2026-09-29", "is_sample": True}
-
-    db = SessionLocal()
-    try:
-        db.add(EconomicEvent(provider="sample", external_id="t-fomc", event_time=datetime.now(timezone.utc) + timedelta(hours=3), country="US",
-                             currency="USD", name="FOMC (sample)", impact="High", source="sample", is_sample=True))
-        db.commit()
-
-        def setup():
-            return {"symbol": "LIVEX", "current_price": 100.0, "stop": 90.0, "targets": [115.0, 130.0], "direction": "LONG", "status": "VALID",
-                    "checks": [], "explanation": {"risk_factors": []}}
-
-        for is_sample in (False, True):
-            st = setup()
-            info = {"LIVEX": {"id": 1, "currency": "USD", "meta": {}, "is_index": False, "is_sample": is_sample}}
-            enrich_setups(db, [st], "US", info, SampleFx(), {})
-            names = [e["name"] for e in st["events"]["upcoming"]]
-            if is_sample:  # sample instrument: sample context is fine (all labelled SAMPLE)
-                assert st["inr"]["is_sample"] and "FOMC (sample)" in names
-            else:  # real instrument: no fake FX rate, no fake events, and the gap is surfaced
-                assert st["inr"]["available"] is False and "rate" not in st["inr"]
-                assert "FOMC (sample)" not in names
-                assert any(c["name"] == "Economic calendar" and c["severity"] == "warn" for c in st["checks"])
-                assert st["status"] == "VALID"  # a missing calendar warns, it does not fabricate a block
-    finally:
-        db.query(EconomicEvent).filter_by(external_id="t-fomc").delete()
-        db.commit()
-        db.close()
 
 
 def test_strategy_disabled_per_market_blocks_live_setups_only(app_client, admin_headers):
@@ -309,14 +242,14 @@ def test_strategy_disabled_per_market_blocks_live_setups_only(app_client, admin_
     assert r.status_code == 200 and "support_bounce" in r.json()["disabled"]
     assert app_client.put("/api/v1/admin/strategy-controls/NSE/nope", headers=admin_headers, json={"enabled": False}).status_code == 404
     assert app_client.put("/api/v1/admin/strategy-controls/MARS/support_bounce", headers=admin_headers, json={"enabled": False}).status_code == 404
-    listed = {s["id"]: s for s in app_client.get("/api/v1/strategies", headers=admin_headers).json()["builtin"]}
-    assert "NSE" in listed["support_bounce"]["disabled_markets"] and listed["breakout_volume"]["disabled_markets"] == {}
+    listed = {s["id"]: s for s in app_client.get("/api/v1/admin/strategies?market=NSE", headers=admin_headers).json()["items"]}
+    assert listed["support_bounce"]["disabled"] and listed["breakout_volume"]["disabled"] is None
     db = SessionLocal()
     try:
         mk = lambda sid: {"symbol": "X", "strategy_id": sid, "strategy_name": sid, "current_price": 10.0, "stop": 9.0, "targets": [11.5, 13.0],  # noqa: E731
                           "direction": "LONG", "status": "VALID", "checks": [], "explanation": {"risk_factors": []}}
         a, b = mk("support_bounce"), mk("breakout_volume")
-        enrich_setups(db, [a, b], "NSE", {"X": {"id": 1, "currency": "INR", "meta": {}, "is_index": False, "is_sample": True}}, None, {})
+        enrich_setups(db, [a, b], "NSE", {"X": {"id": 1, "currency": "INR", "meta": {}, "is_index": False, "is_sample": True}}, {})
         assert a["status"] == "NO_TRADE" and any(c["name"] == "Strategy enabled" and "negative expectancy" in c["detail"] for c in a["checks"])
         assert b["status"] == "VALID"
     finally:
@@ -326,37 +259,8 @@ def test_strategy_disabled_per_market_blocks_live_setups_only(app_client, admin_
     assert app_client.put("/api/v1/admin/strategy-controls/NSE/support_bounce", headers=admin_headers, json={"enabled": True}).json()["disabled"] == {}
 
 
-def test_sample_news_never_mentions_real_instruments(app_client):
-    from app.core.db import SessionLocal
-    from app.models import Instrument as InstrumentRow
-    from app.models import NewsArticle, NewsSymbol
-    from app.services.events_service import ingest_news
-
-    db = SessionLocal()
-    try:
-        db.add(InstrumentRow(symbol="REALNEWSUSDT", name="real", asset_class="CRYPTO", exchange="BINANCE", currency="USD", market="LIVEMKT", is_sample=False))
-        db.add(NewsArticle(provider="sample", external_id="old-fake", published_at=datetime.now(timezone.utc), title="[SAMPLE] fake",
-                           summary="", source="Sample Wire", markets=["LIVEMKT"], sentiment_label="Neutral", sentiment_score=0.0,
-                           sentiment_method="x", sentiment_terms=[], category="General", is_sample=True,
-                           symbols=[NewsSymbol(symbol="REALNEWSUSDT")]))
-        db.commit()
-        out = ingest_news(db, "LIVEMKT")
-        assert "skipped" in out and out["purged"] == 1
-        assert db.query(NewsArticle).filter_by(external_id="old-fake").count() == 0
-        # a sample market still gets (labelled) sample news
-        nse = ingest_news(db, "NSE")
-        assert nse.get("provider") == "sample"
-    finally:
-        db.close()
 
 
-def test_broker_never_redelivers_a_running_task():
-    """Redis redelivers un-acked messages after visibility_timeout; with acks_late a task running longer than
-    that is executed again (it looped the >1 h Upstox ingest for two days). It must exceed the hard time limit."""
-    from app.workers.celery_app import celery
-
-    vt = celery.conf.broker_transport_options["visibility_timeout"]
-    assert celery.conf.task_acks_late and vt > celery.conf.task_time_limit > celery.conf.task_soft_time_limit
 
 
 def test_instrument_missing_from_full_master_is_delisted_not_retried(app_client):
@@ -393,41 +297,10 @@ def test_instrument_missing_from_full_master_is_delisted_not_retried(app_client)
         db.close()
 
 
-def test_simple_mode_hides_features_and_closes_signup(app_client, admin_headers, monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from app.main import create_app
-
-    s = get_settings()
-    monkeypatch.setattr(s, "features_disabled", ["news", "calendar", "analyst", "ml", "analytics", "backtest", "strategies"])
-    monkeypatch.setattr(s, "allow_registration", False)
-    c = TestClient(create_app())
-    assert c.get("/api/v1/auth/config").json() == {"registration_open": False}
-    assert c.post("/api/v1/auth/register", json={"email": "new@example.com", "password": "Str0ng!Passw0rd"}).status_code == 403
-    for gone in ("/api/v1/news", "/api/v1/ml/models", "/api/v1/analytics/hit-rates", "/api/v1/strategies", "/api/v1/backtests"):
-        assert c.get(gone, headers=admin_headers).status_code == 404, gone   # not served at all
-    body = c.get("/api/v1/markets", headers=admin_headers).json()
-    assert body["features"] == ["options"]
-    paths = {r.path for r in c.app.routes}
-    assert "/api/v1/options/nifty" in paths and "/api/v1/news" not in paths   # kept features are still served
 
 
-def test_scheduler_only_runs_enabled_markets_and_features(monkeypatch):
-    from app.workers import celery_app
-
-    s = get_settings()
-    monkeypatch.setattr(s, "markets_enabled", ["NSE", "CRYPTO"])
-    monkeypatch.setattr(s, "features_disabled", ["news", "calendar", "ml"])
-    sched = celery_app._beat_schedule()
-    assert {"eod-NSE", "eod-CRYPTO"} <= set(sched) and not {"eod-US", "eod-FX", "news-hourly", "calendar-daily"} & set(sched)
-    assert not any(k.startswith("ml-weekly") for k in sched)
 
 
-def test_queued_scan_for_disabled_market_is_skipped(monkeypatch):
-    from app.workers.tasks import ingest_and_scan
-
-    monkeypatch.setattr(get_settings(), "markets_enabled", ["NSE", "CRYPTO"])
-    assert "skipped" in ingest_and_scan.run("US")
 
 
 def test_sample_results_hidden_once_market_uses_real_data(app_client, admin_headers, scanned, monkeypatch):
@@ -448,4 +321,56 @@ def test_sample_results_hidden_once_market_uses_real_data(app_client, admin_head
         assert app_client.get("/api/v1/options/signals", headers=admin_headers).status_code == 404
     finally:
         get_cache().invalidate_prefix("me:")
+        db.close()
+
+
+def test_pool_cap_keeps_top_by_traded_value_and_only_grows(app_client):
+    from app.core.db import SessionLocal
+    from app.models import Instrument as InstrumentRow
+    from app.providers.base import DataMeta, Instrument, MarketDataProvider
+    from app.services.market_data import ingest
+
+    class Capped(MarketDataProvider):
+        name, is_sample, lists_full_universe = "capped", False, True
+
+        def __init__(self, ranking, cap=2):
+            self.ranking, self.pool_cap, self.requested = ranking, cap, []
+
+        def list_instruments(self, market="ZC"):
+            return [Instrument("IDXZC", "idx", "INDEX", "NSE", "INR", None, is_index=True)] + \
+                   [Instrument(s, s, "EQUITY", "NSE", "INR", None) for s in ("AZC", "BZC", "CZC", "DZC")]
+
+        def rank_by_traded_value(self, symbols):
+            return [s for s in self.ranking if s in symbols]
+
+        def get_ohlcv(self, symbol, interval="1d", start=None, end=None):
+            self.requested.append(symbol)
+            idx = pd.bdate_range("2026-01-05", periods=5)
+            return pd.DataFrame({"open": 1.0, "high": 1.1, "low": 0.9, "close": 1.0, "volume": 10.0}, index=idx), DataMeta("capped", False, "x", "now")
+
+    db = SessionLocal()
+    try:
+        p = Capped(["CZC", "AZC", "BZC", "DZC"])
+        ingest(db, p, "ZC")
+        assert set(p.requested) == {"IDXZC", "CZC", "AZC"}                    # index + top 2 only
+        assert db.query(InstrumentRow).filter_by(symbol="BZC").one().is_active is False   # parked, not deleted
+        p2 = Capped(["DZC", "BZC", "CZC", "AZC"])                              # ranking changed
+        ingest(db, p2, "ZC")
+        assert set(p2.requested) == {"IDXZC", "CZC", "AZC", "DZC", "BZC"}       # pool only grows: keeps C, A; adds D, B
+    finally:
+        db.close()
+
+
+def test_bootstrap_admin_gets_daily_ideas_alert_once(app_client):
+    from app.cli import ensure_admin, ensure_daily_ideas_alert
+    from app.core.db import SessionLocal
+    from app.models import Alert
+
+    db = SessionLocal()
+    try:
+        u = ensure_admin(db, "boot@example.com", "B00t!Strong-Pass")
+        ensure_daily_ideas_alert(db, u)
+        ensure_daily_ideas_alert(db, u)
+        assert db.query(Alert).filter_by(user_id=u.id, kind="daily_ideas").count() == 1
+    finally:
         db.close()

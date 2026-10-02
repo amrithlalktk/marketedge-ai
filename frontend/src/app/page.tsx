@@ -2,19 +2,22 @@
 
 import Link from "next/link";
 import { Suspense } from "react";
-import { GlobalOverviewSection, cardPrice } from "@/components/GlobalOverview";
 import { MarketSwitcher } from "@/components/MarketSwitcher";
 import { TradeIdeas } from "@/components/TradeIdeas";
-import { MlRegimeCard } from "@/components/MlBlocks";
 import { SetupCard } from "@/components/SetupCard";
 import { Sparkline } from "@/components/Sparkline";
 import { Bar, Card, DataStamp, Disclaimer, EmptyState, ErrorState, PageHeader, Pill, Skeleton, Stat, TableWrap, cx } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { integer, moveClass, num, pct, signedPct } from "@/lib/format";
-import { featureOn, marketLabel, sectorWord, useMarket, withMarket, type MarketId } from "@/lib/market";
+import { integer, moveClass, num, pct, price, px, signedPct } from "@/lib/format";
+import { marketLabel, sectorWord, useMarket, withMarket, type MarketId } from "@/lib/market";
 import type { Breadth, IndexCard, Overview, Regime, ScanSummary, Sectors } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
+
+function cardPrice(c: IndexCard): string {
+  if (c.asset_class === "INDEX") return px(c.price, { currency: c.currency });
+  return price(c.price, c.currency ?? "INR");
+}
 
 function IndexTile({ ix }: { ix: IndexCard }) {
   return (
@@ -207,10 +210,7 @@ function DashboardInner() {
           {market === "CRYPTO" && ov.data.btc_dominance_pct != null && (
             <p className="rounded border border-edge bg-panel p-2 text-xs">BTC dominance <span className="num font-semibold">{pct(ov.data.btc_dominance_pct)}</span> <span className="text-muted">— {ov.data.btc_dominance_basis}</span>{ov.data.stablecoin_flows && !ov.data.stablecoin_flows.available && <span className="block text-amber-200">Stablecoin flows unavailable — {ov.data.stablecoin_flows.note}</span>}</p>
           )}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <RegimePanel r={ov.data.regime} />
-            {featureOn("ml") && <MlRegimeCard r={ov.data.regime_ml} />}
-          </div>
+          <RegimePanel r={ov.data.regime} />
           {ov.data.breadth ? <BreadthPanel b={ov.data.breadth} /> : <Card title="Market breadth"><EmptyState title="Breadth not available for this market" /></Card>}
         </div>
       )}
@@ -246,7 +246,6 @@ function DashboardInner() {
         </div>
       </div>
 
-      <GlobalOverviewSection />
       <Disclaimer />
     </>
   );

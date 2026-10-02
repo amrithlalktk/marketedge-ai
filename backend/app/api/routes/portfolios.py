@@ -22,6 +22,7 @@ class PortfolioIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     kind: str = Field(default="paper", pattern="^(paper|journal)$")
     starting_capital: float = Field(default=1_000_000, ge=1_000, le=1e11)
+    base_currency: str = Field(default="INR", pattern="^(INR|USD)$")  # INR for NSE / NIFTY, USD for crypto (no FX conversion)
 
 
 class OrderIn(BaseModel):
@@ -114,7 +115,7 @@ def create_portfolio(body: PortfolioIn, db: Session = Depends(get_db), user: Use
         raise HTTPException(403, f"Standard accounts can have {get_settings().paper_portfolios_max_standard} {body.kind} portfolio(s)")
     if db.scalar(select(Portfolio).where(Portfolio.user_id == user.id, Portfolio.name == body.name)):
         raise HTTPException(409, "A portfolio with this name already exists")
-    p = Portfolio(user_id=user.id, name=body.name, kind=body.kind, starting_capital=body.starting_capital)
+    p = Portfolio(user_id=user.id, name=body.name, kind=body.kind, starting_capital=body.starting_capital, base_currency=body.base_currency)
     db.add(p)
     db.commit()
     return portfolio_service.valuation(db, p)

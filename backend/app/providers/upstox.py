@@ -177,9 +177,10 @@ class UpstoxProvider(MarketDataProvider):
     is_sample = False
     lists_full_universe = True  # an instrument missing from the master has left the exchange
 
-    def __init__(self, client: UpstoxClient, history_days: int = 2200):
+    def __init__(self, client: UpstoxClient, history_days: int = 2200, universe_size: Optional[int] = None):
         self.c = client
         self.history_days = history_days
+        self.pool_cap = universe_size  # cap the stored pool (free database tier); None = every NSE stock
         self._keys: Dict[str, str] = {}
         self._today: Dict[str, dict] = {}  # symbol -> today's session bar (batch quotes)
 
@@ -226,6 +227,21 @@ class UpstoxProvider(MarketDataProvider):
                     self._today[sym] = {"ts": pd.Timestamp(d), "open": float(o["open"]), "high": float(o["high"]), "low": float(o["low"]),
                                         "close": float(o["close"]), "volume": float(o.get("volume") or 0)}
         return len(self._today)
+
+    def rank_by_traded_value(self, symbols: List[str]) -> List[str]:
+        """Symbols ordered by the latest session's traded value (close × volume), from batch quotes (≈ len/500 requests).
+        Needs a valid token; used to pick which stocks a size-capped installation stores."""
+        if not self._keys:
+            self.list_instruments()
+        by_key = {self._keys[s]: s for s in symbols if s in self._keys}
+        keys, value = list(by_key), {}
+        for i in range(0, len(keys), 500):
+            data = self.c.get("/v3/market-quote/ohlc", {"instrument_key": ",".join(keys[i:i + 500]), "interval": "1d"}).get("data") or {}
+            for q in data.values():
+                sym, o = by_key.get(q.get("instrument_token")), q.get("live_ohlc") or {}
+                if sym and o.get("close") and o.get("volume"):
+                    value[sym] = float(o["close"]) * float(o["volume"])
+        return sorted(value, key=lambda k: -value[k])
 
     def _key_for(self, symbol: str) -> str:
         if symbol not in self._keys:
