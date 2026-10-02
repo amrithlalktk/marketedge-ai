@@ -46,9 +46,14 @@ In the repo, go to Settings → Secrets and variables → Actions.
 | `BOOTSTRAP_ADMIN_EMAIL` | your login email |
 | `BOOTSTRAP_ADMIN_PASSWORD` | a strong password: at least 10 characters, with upper and lower case, a digit and a symbol |
 
-Optional **Variables** (same page, Variables tab). The defaults already suit Upstox and Binance:
+**Variables** (same page, Variables tab):
 
-- `PUBLIC_APP_URL`: your website address, used in notification links.
+| Variable | Value |
+|---|---|
+| `DAILY_ENABLED` | `true`. Turns on the schedule; until then only manual runs happen, so nothing fails while you're still setting up. |
+| `PUBLIC_APP_URL` | optional: your website address, used in notification links |
+
+The provider defaults already suit Upstox and Binance.
 
 ## Step 2: API on Vercel
 1. Vercel → **Add New → Project** → import this repo.

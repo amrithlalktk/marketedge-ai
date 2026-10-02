@@ -29,6 +29,8 @@ concurrency:
 
 jobs:
   run:
+    # scheduled runs start once the deployment is configured (repo variable DAILY_ENABLED=true); manual runs always work
+    if: ${{ vars.DAILY_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     defaults: {run: {working-directory: backend}}
