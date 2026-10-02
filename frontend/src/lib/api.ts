@@ -240,6 +240,7 @@ export async function download(path: string, filename: string): Promise<void> {
 
 // ---------------------------------------------------------------- endpoints
 export const api = {
+  authConfig: () => request<{ registration_open: boolean }>("/auth/config", { auth: false }),
   auth: {
     async login(email: string, password: string, totp_code?: string): Promise<TokenOut> {
       const res = await fetch(`${API_BASE}/auth/login`, {
@@ -271,7 +272,7 @@ export const api = {
       request<{ totp_enabled: boolean }>("/auth/2fa/disable", { method: "POST", body: { code, password } }),
   },
   markets: {
-    list: () => request<{ items: MarketInfo[]; default_market?: string }>("/markets"),
+    list: () => request<{ items: MarketInfo[]; default_market?: string; features?: string[] }>("/markets"),
     global: () => request<GlobalOverview>("/markets/global-overview"),
     overview: (market?: string) => request<Overview>("/markets/overview", { query: { market } }),
     regime: (history = 90, market?: string) => request<{ current: Regime; history: { as_of: string; regime: string; volatility: string }[] }>("/markets/regime", { query: { history, market } }),

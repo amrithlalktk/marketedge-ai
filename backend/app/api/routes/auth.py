@@ -44,8 +44,16 @@ def _issue(db: Session, user: User, response: Response, request: Request, family
     return TokenOut(access_token=sec.create_access_token(user.id, user.role.name, family), expires_in=s.access_token_minutes * 60)
 
 
+@router.get("/config")
+def auth_config():
+    """Public: what the login page may offer."""
+    return {"registration_open": get_settings().allow_registration}
+
+
 @router.post("/register", response_model=UserOut, status_code=201)
 def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
+    if not get_settings().allow_registration:
+        raise HTTPException(403, "Sign-up is closed on this installation")
     problem = sec.validate_password_strength(body.password)
     if problem:
         raise HTTPException(422, problem)

@@ -143,6 +143,7 @@ class UpstoxClient:
 class UpstoxProvider(MarketDataProvider):
     name = "upstox"
     is_sample = False
+    lists_full_universe = True  # an instrument missing from the master has left the exchange
 
     def __init__(self, client: UpstoxClient, history_days: int = 2200):
         self.c = client

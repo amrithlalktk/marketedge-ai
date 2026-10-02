@@ -332,7 +332,9 @@ def test_alerts_flow(app_client, admin_headers, scanned):
 
 
 def test_alerts_from_setup_and_new_setup_matching(app_client, admin_headers, scanned):
-    sid = app_client.get(f"{API}/signals?status=NO_TRADE", headers=admin_headers).json()["items"][0]["id"]
+    from tests.conftest import any_signal_id
+
+    sid = any_signal_id(app_client, admin_headers)
     r = app_client.post(f"{API}/alerts/from-setup/{sid}", json={"kinds": ["entry", "target1", "stop"]}, headers=admin_headers)
     assert r.status_code == 201 and {a["kind"] for a in r.json()["items"]} == {"entry_reached", "target_reached", "stop_reached"}
     from engine.alerts import matches_setup

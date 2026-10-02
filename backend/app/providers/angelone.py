@@ -132,6 +132,7 @@ class AngelOneSession:
 class AngelOneProvider(MarketDataProvider):
     name = "angelone"
     is_sample = False
+    lists_full_universe = True  # an instrument missing from the master has left the exchange
 
     def __init__(self, session: AngelOneSession, history_days: int = 2200, chunk_days: int = 1000):
         self.s = session

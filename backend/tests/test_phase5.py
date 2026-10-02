@@ -194,7 +194,9 @@ def test_stock_events_and_setup_event_context(app_client, admin_headers, p5):
 def test_analyst_llm_path_grounding_and_audit(app_client, admin_headers, p5, monkeypatch):
     from app.services import analyst_service
 
-    sid = app_client.get(f"{API}/signals?status=NO_TRADE", headers=admin_headers).json()["items"][0]["id"]
+    from tests.conftest import any_signal_id
+
+    sid = any_signal_id(app_client, admin_headers)
     sig = app_client.get(f"{API}/signals/{sid}", headers=admin_headers).json()
     fake = FakeClient(f"Stop {sig['stop']} and T1 {sig['targets'][0]}. Historical performance does not guarantee future results.")
     monkeypatch.setattr(analyst_service, "_api_key", lambda: "test-key")

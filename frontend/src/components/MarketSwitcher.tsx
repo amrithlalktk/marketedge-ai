@@ -1,12 +1,13 @@
 "use client";
 
-import { MARKETS, useMarket, type MarketId } from "@/lib/market";
+import { enabledMarkets, useMarket, type MarketId } from "@/lib/market";
 import { cx } from "./ui";
 
 /** Market selector bound to `?market=`; a select on phones, a segmented control from `sm` up. */
 export function MarketSwitcher({ className, only }: { className?: string; only?: MarketId[] }) {
   const [market, setMarket] = useMarket();
-  const opts = MARKETS.filter((m) => !only || only.includes(m.id));
+  const opts = enabledMarkets().filter((m) => !only || only.includes(m.id));
+  if (opts.length < 2) return null;
   return (
     <div className={cx("min-w-0", className)}>
       <label className="sr-only" htmlFor="mkt-sel">Market</label>

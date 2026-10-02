@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     # Phase 8 ops
     metrics_token: Optional[str] = None      # bearer token for /metrics; unset → /metrics disabled in production
     allow_sample_in_production: bool = False  # sample (DEMO_) data is refused in production unless explicitly allowed
+    # Simple mode: features switched OFF (UI hidden, API routes not mounted, scheduled jobs skipped). Nothing is
+    # deleted — remove a name to bring it back. Names: news, calendar, analyst, ml, analytics, backtest, strategies, options
+    features_disabled: Annotated[List[str], NoDecode] = []
+    allow_registration: bool = True          # False → only existing accounts (single-user installs)
     default_market: Optional[str] = None   # market the UI opens on; unset → first enabled market on real (non-sample) data
     prewarm_top_n: int = 40                 # symbols whose analysis/candles are cached right after each scan
     audit_retention_days: int = 365
@@ -117,7 +121,7 @@ class Settings(BaseSettings):
     bootstrap_admin_email: Optional[str] = None
     bootstrap_admin_password: Optional[str] = None
 
-    @field_validator("cors_origins", "trusted_proxies", "markets_enabled", "binance_exclude", mode="before")
+    @field_validator("cors_origins", "trusted_proxies", "markets_enabled", "binance_exclude", "features_disabled", mode="before")
     @classmethod
     def _split(cls, v):
         if isinstance(v, str):
@@ -129,6 +133,9 @@ class Settings(BaseSettings):
         import ipaddress
 
         return [ipaddress.ip_network(n, strict=False) for n in self.trusted_proxies]
+
+    def feature_on(self, name: str) -> bool:
+        return name not in self.features_disabled
 
     @property
     def broker_url(self) -> Optional[str]:

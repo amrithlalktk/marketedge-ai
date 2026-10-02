@@ -2,6 +2,7 @@ import Link from "next/link";
 import { isFx, num, pct, period, price, px, rr } from "@/lib/format";
 import { marketLabel } from "@/lib/market";
 import { CardExtras } from "./MarketBlocks";
+import { featureOn } from "@/lib/market";
 import { MlLine } from "./MlBlocks";
 import type { ProbabilitySummary, SetupSummary } from "@/lib/types";
 import { Bar, DataStamp, DirectionBadge, StatusBadge } from "./ui";
@@ -86,7 +87,7 @@ export function SetupCard({ s, showBlocking = false }: { s: SetupSummary; showBl
         <Bar value={s.score} />
       </div>
       <CardExtras s={s} />
-      <MlLine ml={s.ml} />
+      {featureOn("ml") && <MlLine ml={s.ml} />}
 
       {s.reasons.length > 0 && (
         <ul className="space-y-0.5 text-xs">

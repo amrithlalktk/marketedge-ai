@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { InlineError } from "@/components/ui";
-import { ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
 function LoginForm() {
@@ -65,10 +65,22 @@ function LoginForm() {
           {busy ? "Signing in…" : needTotp ? "Verify & sign in" : "Sign in"}
         </button>
       </form>
-      <p className="mt-4 text-sm text-muted">
-        No account? <Link className="link" href="/register">Create one</Link>
-      </p>
+      <SignupLink />
     </div>
+  );
+}
+
+/** Shown only while sign-up is open (ALLOW_REGISTRATION); single-user installs close it. */
+function SignupLink() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    api.authConfig().then((c) => setOpen(c.registration_open)).catch(() => setOpen(false));
+  }, []);
+  if (!open) return null;
+  return (
+    <p className="mt-4 text-sm text-muted">
+      No account? <Link className="link" href="/register">Create one</Link>
+    </p>
   );
 }
 

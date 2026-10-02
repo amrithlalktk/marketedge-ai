@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -348,3 +348,83 @@ def test_sample_news_never_mentions_real_instruments(app_client):
         assert nse.get("provider") == "sample"
     finally:
         db.close()
+
+
+def test_broker_never_redelivers_a_running_task():
+    """Redis redelivers un-acked messages after visibility_timeout; with acks_late a task running longer than
+    that is executed again (it looped the >1 h Upstox ingest for two days). It must exceed the hard time limit."""
+    from app.workers.celery_app import celery
+
+    vt = celery.conf.broker_transport_options["visibility_timeout"]
+    assert celery.conf.task_acks_late and vt > celery.conf.task_time_limit > celery.conf.task_soft_time_limit
+
+
+def test_instrument_missing_from_full_master_is_delisted_not_retried(app_client):
+    from app.core.db import SessionLocal
+    from app.models import DataStatus
+    from app.models import Instrument as InstrumentRow
+    from app.providers.base import DataMeta, Instrument, MarketDataProvider
+    from app.services.market_data import ingest
+
+    class Master(MarketDataProvider):
+        name, is_sample, lists_full_universe = "master", False, True
+
+        def __init__(self, syms):
+            self.syms, self.requested = syms, []
+
+        def list_instruments(self, market="ZQ"):
+            return [Instrument(s, s, "EQUITY", "NSE", "INR", None) for s in self.syms]
+
+        def get_ohlcv(self, symbol, interval="1d", start=None, end=None):
+            self.requested.append(symbol)
+            idx = pd.bdate_range("2026-01-05", periods=5)
+            return pd.DataFrame({"open": 1.0, "high": 1.1, "low": 0.9, "close": 1.0, "volume": 10.0}, index=idx), DataMeta("master", False, "x", "now")
+
+    db = SessionLocal()
+    try:
+        ingest(db, Master(["AAA1", "GONE1"]), "ZQ")
+        p = Master(["AAA1"])                       # GONE1 has left the exchange
+        out = ingest(db, p, "ZQ")
+        gone = db.query(InstrumentRow).filter_by(symbol="GONE1").one()
+        assert gone.delisted_on == date(2026, 1, 9)        # its last stored bar
+        assert p.requested == ["AAA1"] and not out["errors"]  # not requested, no daily error
+        assert db.get(DataStatus, (gone.id, "1d")).last_bar_ts is not None  # history kept for backtests
+    finally:
+        db.close()
+
+
+def test_simple_mode_hides_features_and_closes_signup(app_client, admin_headers, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    s = get_settings()
+    monkeypatch.setattr(s, "features_disabled", ["news", "calendar", "analyst", "ml", "analytics", "backtest", "strategies"])
+    monkeypatch.setattr(s, "allow_registration", False)
+    c = TestClient(create_app())
+    assert c.get("/api/v1/auth/config").json() == {"registration_open": False}
+    assert c.post("/api/v1/auth/register", json={"email": "new@example.com", "password": "Str0ng!Passw0rd"}).status_code == 403
+    for gone in ("/api/v1/news", "/api/v1/ml/models", "/api/v1/analytics/hit-rates", "/api/v1/strategies", "/api/v1/backtests"):
+        assert c.get(gone, headers=admin_headers).status_code == 404, gone   # not served at all
+    body = c.get("/api/v1/markets", headers=admin_headers).json()
+    assert body["features"] == ["options"]
+    paths = {r.path for r in c.app.routes}
+    assert "/api/v1/options/nifty" in paths and "/api/v1/news" not in paths   # kept features are still served
+
+
+def test_scheduler_only_runs_enabled_markets_and_features(monkeypatch):
+    from app.workers import celery_app
+
+    s = get_settings()
+    monkeypatch.setattr(s, "markets_enabled", ["NSE", "CRYPTO"])
+    monkeypatch.setattr(s, "features_disabled", ["news", "calendar", "ml"])
+    sched = celery_app._beat_schedule()
+    assert {"eod-NSE", "eod-CRYPTO"} <= set(sched) and not {"eod-US", "eod-FX", "news-hourly", "calendar-daily"} & set(sched)
+    assert not any(k.startswith("ml-weekly") for k in sched)
+
+
+def test_queued_scan_for_disabled_market_is_skipped(monkeypatch):
+    from app.workers.tasks import ingest_and_scan
+
+    monkeypatch.setattr(get_settings(), "markets_enabled", ["NSE", "CRYPTO"])
+    assert "skipped" in ingest_and_scan.run("US")

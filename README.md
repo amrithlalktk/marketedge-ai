@@ -53,6 +53,24 @@ You can also implement a licensed vendor adapter in `backend/app/providers/` (se
 | `cd backend && ./.venv/bin/python -m pytest -q` | run the test suite |
 | `alembic upgrade head` / `alembic revision --autogenerate -m "..."` | migrations |
 
+## Simple mode
+
+A single-user install can switch off everything it does not use. Nothing is deleted, and each line can be undone:
+
+```
+MARKETS_ENABLED=NSE,CRYPTO                       # only markets with real data
+FEATURES_DISABLED=news,calendar,analyst,ml,analytics,backtest,strategies
+ALLOW_REGISTRATION=false                         # only your existing account
+```
+
+For a switched-off feature:
+
+* its pages are hidden;
+* its API routes are not served;
+* its scheduled jobs are not run.
+
+Remove a name to bring the feature back.
+
 ## Production
 
 * [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers the single-host compose setup with automatic TLS, Kubernetes, and the AWS and Azure mappings.

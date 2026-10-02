@@ -81,8 +81,12 @@ def create_app() -> FastAPI:
                        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
                        expose_headers=["X-Request-ID"])
     app.add_middleware(RequestContextMiddleware)  # outermost: request id + access log + HTTP metrics
-    for r in (auth, markets, stocks, signals, strategies, backtests, watchlists, risk, options, analytics, news, analyst, ml, portfolios, alerts, notifications, admin, upstox):
+    optional = {"strategies": strategies, "backtest": backtests, "options": options, "analytics": analytics, "news": news, "analyst": analyst, "ml": ml}
+    for r in (auth, markets, stocks, signals, watchlists, risk, portfolios, alerts, notifications, admin, upstox):
         app.include_router(r.router, prefix=s.api_prefix)
+    for name, r in optional.items():  # simple mode: switched-off features are not served at all
+        if s.feature_on(name) or (name == "news" and s.feature_on("calendar")):
+            app.include_router(r.router, prefix=s.api_prefix)
     app.include_router(signals.market_router, prefix=s.api_prefix)
 
     @app.get("/health", tags=["meta"])

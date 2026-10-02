@@ -33,7 +33,9 @@ def _upsert_stmt(db: Session):
 def sync_instruments(db: Session, provider: MarketDataProvider, market: str) -> Dict[str, Instrument]:
     sectors = {s.name: s for s in db.scalars(select(Sector))}
     existing = {i.symbol: i for i in db.scalars(select(Instrument))}
+    listed = set()
     for ins in provider.list_instruments(market):
+        listed.add(ins.symbol)
         if ins.sector and ins.sector not in sectors:
             sectors[ins.sector] = Sector(name=ins.sector)
             db.add(sectors[ins.sector])
@@ -57,6 +59,14 @@ def sync_instruments(db: Session, provider: MarketDataProvider, market: str) -> 
     for row in existing.values():
         if row.market == market and row.is_active and (bool(row.is_sample) != bool(provider.is_sample) or row.symbol in rejected):
             row.is_active = False
+    if getattr(provider, "lists_full_universe", False):
+        # Gone from a full instrument master = left the exchange. Keep the history (it matters for survivorship-free
+        # backtests) but mark it delisted at its last stored bar, so it is no longer fetched or offered as a setup.
+        for row in existing.values():
+            if (row.market == market and row.is_active and row.delisted_on is None and bool(row.is_sample) == bool(provider.is_sample)
+                    and row.symbol not in listed):
+                st = db.get(DataStatus, (row.id, "1d")) if row.id else None
+                row.delisted_on = st.last_bar_ts.date() if st and st.last_bar_ts else date.today()
     db.commit()
     return existing
 
@@ -66,7 +76,9 @@ def ingest(db: Session, provider: MarketDataProvider, market: str, symbols: Opti
     if hasattr(provider, "preflight"):
         provider.preflight()  # e.g. Upstox not connected today: fail ONCE with a clear message, not once per symbol
     instruments = sync_instruments(db, provider, market)
-    in_market = {k: v for k, v in instruments.items() if v.market == market and v.is_active}
+    # delisted history is final: nothing more to fetch (unless the provider still lists it, e.g. Binance archive pairs)
+    in_market = {k: v for k, v in instruments.items() if v.market == market and v.is_active
+                 and (v.delisted_on is None or not getattr(provider, "lists_full_universe", False))}
     targets = [in_market[s] for s in (symbols or in_market.keys()) if s in in_market]
     stats = {"instruments": len(targets), "bars": 0, "errors": {}}
     if hasattr(provider, "prefetch") and interval == "1d":

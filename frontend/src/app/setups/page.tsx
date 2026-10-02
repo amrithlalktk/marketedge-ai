@@ -9,7 +9,7 @@ import { DataStamp, Disclaimer, EmptyState, ErrorState, PageHeader, Segmented, S
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { SORT_OPTIONS } from "@/lib/constants";
-import { marketLabel, useMarket, withMarket, type MarketId } from "@/lib/market";
+import { featureOn, marketLabel, marketOn, useMarket, withMarket, type MarketId } from "@/lib/market";
 import type { OptionSignals, SortKey, TopSetups } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
@@ -196,7 +196,10 @@ function SetupsInner() {
     router.replace(q ? `/setups?${q}` : "/setups", { scroll: false });
   };
   const focus = ["US", "EUROPE", "ASIA"].includes(market) ? "GLOBAL" : market;
-  const sections = market === "NSE" ? ORDER : [...ORDER.filter((o) => o.id === focus), ...ORDER.filter((o) => o.id !== focus)];
+  const on = (id: string) =>
+    id === "NFO" ? marketOn("NSE") && featureOn("options") : id === "GLOBAL" ? (["US", "EUROPE", "ASIA"] as const).some(marketOn) : marketOn(id as MarketId);
+  const shown = ORDER.filter((o) => on(o.id));
+  const sections = market === "NSE" ? shown : [...shown.filter((o) => o.id === focus), ...shown.filter((o) => o.id !== focus)];
 
   return (
     <>

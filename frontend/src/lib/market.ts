@@ -30,6 +30,19 @@ export function sectorWord(m: MarketId): { plural: string; singular: string } {
  * the first market on real data, or DEFAULT_MARKET) by <MarketDefaultGate> before any page renders.
  */
 let defaultMarket: MarketId = "NSE";
+let enabled: MarketId[] | null = null; // null = all markets (until /markets has answered)
+let features: Set<string> | null = null; // null = every feature on
+
+/** Markets switched on for this installation (MARKETS_ENABLED), in display order. */
+export const enabledMarkets = () => MARKETS.filter((m) => !enabled || enabled.includes(m.id));
+export const marketOn = (m: MarketId) => !enabled || enabled.includes(m);
+/** Optional features (simple mode turns them off; see FEATURES_DISABLED). */
+export const featureOn = (name: "news" | "calendar" | "analyst" | "ml" | "analytics" | "backtest" | "strategies" | "options") =>
+  !features || features.has(name);
+export function setAppConfig(cfg: { markets?: string[]; features?: string[] }) {
+  if (cfg.markets) enabled = cfg.markets.filter(isMarket);
+  if (cfg.features) features = new Set(cfg.features);
+}
 export const getDefaultMarket = () => defaultMarket;
 export function setDefaultMarket(m: string | null | undefined) {
   if (isMarket(m)) defaultMarket = m;

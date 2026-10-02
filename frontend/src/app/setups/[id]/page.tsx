@@ -1,5 +1,7 @@
 "use client";
 
+import { featureOn } from "@/lib/market";
+
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { PositionSizer } from "@/components/PositionSizer";
@@ -88,8 +90,8 @@ export default function SetupDetailPage() {
       )}
       {(s.events || s.news) && (
         <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {s.events && <EventRiskBlock ev={s.events} checks={s.checks} />}
-          {s.news && <NewsFlowBlock n={s.news} />}
+          {s.events && featureOn("calendar") && <EventRiskBlock ev={s.events} checks={s.checks} />}
+          {s.news && featureOn("news") && <NewsFlowBlock n={s.news} />}
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -100,7 +102,7 @@ export default function SetupDetailPage() {
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="space-y-4">
         <ProbabilityPanel p={s.probability} strategyRules={{ entry: s.strategy.entry_rule, exit: `${s.strategy.stop_rule} ${s.strategy.target_rule} Time exit after ${s.strategy.max_hold_bars} bars.` }} />
-        <MlPanel ml={s.ml} />
+        {featureOn("ml") && <MlPanel ml={s.ml} />}
         </div>
         <ChecksPanel checks={s.checks} />
       </div>
@@ -117,7 +119,7 @@ export default function SetupDetailPage() {
       <p className="mt-2 text-[11px] text-muted">{s.explanation.historical_basis}</p>
 
       <div className="mt-4"><SetupActions s={s} signalId={s.id ?? Number(id)} /></div>
-      <div className="mt-4"><AnalystPanel signalId={s.id ?? Number(id)} /></div>
+      {featureOn("analyst") && <div className="mt-4"><AnalystPanel signalId={s.id ?? Number(id)} /></div>}
       <div className="mt-4 space-y-3">
         <Collapsible title="Position-size quick calc" defaultOpen>
           <PositionSizer entry={s.current_price} stop={s.stop} atr={s.atr} direction={s.direction} compact={false} currency={s.currency} />

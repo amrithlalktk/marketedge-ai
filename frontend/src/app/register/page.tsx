@@ -2,12 +2,27 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { InlineError } from "@/components/ui";
 import { api } from "@/lib/api";
 import { passwordProblem } from "@/lib/constants";
 
 export default function RegisterPage() {
+  const [closed, setClosed] = useState(false);
+  useEffect(() => {
+    api.authConfig().then((c) => setClosed(!c.registration_open)).catch(() => undefined);
+  }, []);
+  if (closed)
+    return (
+      <div role="status" className="rounded-md border border-edge bg-panel p-4 text-sm">
+        <p className="font-semibold">Sign-up is closed</p>
+        <p className="mt-1 text-muted">This installation is private. <Link className="link" href="/login">Sign in</Link></p>
+      </div>
+    );
+  return <RegisterForm />;
+}
+
+function RegisterForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");

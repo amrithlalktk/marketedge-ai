@@ -79,11 +79,17 @@ def options(job_id: Optional[int] = None):
 @celery.task(name="app.workers.tasks.ingest_and_scan")
 def ingest_and_scan(market: Optional[str] = None):
     """Scheduled per market. FX first so non-INR markets convert with fresh rates."""
+    from app.core.markets import enabled_markets
+
     market = market or "NSE"
+    s = get_settings()
+    if market not in enabled_markets():
+        return {"skipped": f"{market} is not enabled (MARKETS_ENABLED)"}
     ingest(None, market)
-    news(None, market)  # fresh headlines/sentiment before the scan attaches them to setups
+    if s.feature_on("news"):
+        news(None, market)  # fresh headlines/sentiment before the scan attaches them to setups
     scan(None, market)
-    if market == "NSE":
+    if market == "NSE" and s.feature_on("options"):
         return options(None)
 
 

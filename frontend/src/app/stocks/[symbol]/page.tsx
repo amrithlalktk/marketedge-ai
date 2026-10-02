@@ -1,5 +1,7 @@
 "use client";
 
+import { featureOn } from "@/lib/market";
+
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -39,7 +41,7 @@ function ActiveSetup({ s }: { s: SetupDetail }) {
             <span className="text-up">{px(s.targets[1], o)}</span> · R:R {rr(s.rr_t2)} · {s.currency}
           </p>
           <div className="mt-1"><HitRate p={s.probability} compact /></div>
-          <div className="mt-1"><CardExtras s={s} /><MlLine ml={s.ml} /></div>
+          <div className="mt-1"><CardExtras s={s} />{featureOn("ml") && <MlLine ml={s.ml} />}</div>
           <div className="mt-1"><DataStamp meta={s.data} asOf={s.as_of} /></div>
         </div>
         <ScoreBadge score={s.score} label={s.score_label} />
@@ -53,8 +55,8 @@ function ActiveSetup({ s }: { s: SetupDetail }) {
       <div className="mt-3">
         <Collapsible title="Full setup analysis">
           <div className="space-y-3">
-            {s.events && <EventRiskBlock ev={s.events} checks={s.checks} />}
-            {s.news && <NewsFlowBlock n={s.news} />}
+            {s.events && featureOn("calendar") && <EventRiskBlock ev={s.events} checks={s.checks} />}
+            {s.news && featureOn("news") && <NewsFlowBlock n={s.news} />}
             {s.inr && <InrPanel i={s.inr} currency={s.currency} />}
             {s.pips && <PipsPanel p={s.pips} />}
             {s.derivatives && <DerivativesPanel d={s.derivatives} marketCap={s.market_cap_usd} spreadBps={s.spread_bps} />}
@@ -62,7 +64,7 @@ function ActiveSetup({ s }: { s: SetupDetail }) {
             <ScoreBreakdown components={s.components} score={s.score} label={s.score_label} notes={s.score_notes} />
             <WhyPanel e={s.explanation} />
             <ProbabilityPanel p={s.probability} />
-            <MlPanel ml={s.ml} />
+            {featureOn("ml") && <MlPanel ml={s.ml} />}
             <ChecksPanel checks={s.checks} />
             <MtfPanel m={s.mtf} />
           </div>
@@ -268,8 +270,8 @@ export default function StockPage() {
 
       <div className="mt-4"><AnalysisSection symbol={symbol} onSetup={setSetup} market={d?.market} /></div>
 
-      <div className="mt-4"><StockEventsSection symbol={symbol} /></div>
-      <div className="mt-4"><AnalystPanel symbol={symbol} title={`Ask the analyst about ${symbol}`} /></div>
+      {(featureOn("news") || featureOn("calendar")) && <div className="mt-4"><StockEventsSection symbol={symbol} /></div>}
+      {featureOn("analyst") && <div className="mt-4"><AnalystPanel symbol={symbol} title={`Ask the analyst about ${symbol}`} /></div>}
       <div className="mt-4">
         <Card title="Fundamentals">
           {!d ? <Skeleton className="h-10" /> : d.market && d.market !== "NSE" ? (

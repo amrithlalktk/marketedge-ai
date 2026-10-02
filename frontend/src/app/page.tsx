@@ -11,7 +11,7 @@ import { Bar, Card, DataStamp, Disclaimer, EmptyState, ErrorState, PageHeader, P
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { integer, moveClass, num, pct, signedPct } from "@/lib/format";
-import { marketLabel, sectorWord, useMarket, withMarket, type MarketId } from "@/lib/market";
+import { featureOn, marketLabel, sectorWord, useMarket, withMarket, type MarketId } from "@/lib/market";
 import type { Breadth, IndexCard, Overview, Regime, ScanSummary, Sectors } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
@@ -207,7 +207,7 @@ function DashboardInner() {
           )}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <RegimePanel r={ov.data.regime} />
-            <MlRegimeCard r={ov.data.regime_ml} />
+            {featureOn("ml") && <MlRegimeCard r={ov.data.regime_ml} />}
           </div>
           {ov.data.breadth ? <BreadthPanel b={ov.data.breadth} /> : <Card title="Market breadth"><EmptyState title="Breadth not available for this market" /></Card>}
         </div>
