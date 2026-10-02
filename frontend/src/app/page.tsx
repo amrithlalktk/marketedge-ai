@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { GlobalOverviewSection, cardPrice } from "@/components/GlobalOverview";
 import { MarketSwitcher } from "@/components/MarketSwitcher";
+import { TradeIdeas } from "@/components/TradeIdeas";
 import { MlRegimeCard } from "@/components/MlBlocks";
 import { SetupCard } from "@/components/SetupCard";
 import { Sparkline } from "@/components/Sparkline";
@@ -190,6 +191,7 @@ function DashboardInner() {
   return (
     <>
       <PageHeader title={`Market dashboard — ${label}`} subtitle={ov.data?.profile ? String(ov.data.profile) : "End-of-day analysis"} right={<MarketSwitcher />} />
+      <div className="mb-4"><TradeIdeas /></div>
       {ov.error && <ErrorState error={ov.error} onRetry={ov.reload} what={`${label} overview`} />}
       {ov.loading && !ov.data && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
