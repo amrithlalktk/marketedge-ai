@@ -374,3 +374,9 @@ def test_bootstrap_admin_gets_daily_ideas_alert_once(app_client):
         assert db.query(Alert).filter_by(user_id=u.id, kind="daily_ideas").count() == 1
     finally:
         db.close()
+
+
+def test_database_url_accepts_neon_style_prefixes():
+    for raw in ("postgres://u:p@h/db?sslmode=require", "postgresql://u:p@h/db?sslmode=require", "postgresql+psycopg://u:p@h/db?sslmode=require"):
+        assert Settings(database_url=raw).database_url == "postgresql+psycopg://u:p@h/db?sslmode=require"
+    assert Settings(database_url="sqlite:///x.db").database_url == "sqlite:///x.db"

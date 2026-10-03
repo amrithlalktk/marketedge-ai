@@ -95,6 +95,16 @@ class Settings(BaseSettings):
     bootstrap_admin_email: Optional[str] = None
     bootstrap_admin_password: Optional[str] = None
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _psycopg_driver(cls, v):
+        """Accept Neon/Vercel/Heroku-style URLs (postgres:// or postgresql://) and use the installed psycopg 3 driver."""
+        if isinstance(v, str):
+            for prefix in ("postgres://", "postgresql://"):
+                if v.startswith(prefix):
+                    return "postgresql+psycopg://" + v[len(prefix):]
+        return v
+
     @field_validator("cors_origins", "trusted_proxies", "markets_enabled", "binance_exclude", mode="before")
     @classmethod
     def _split(cls, v):
