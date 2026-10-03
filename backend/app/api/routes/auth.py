@@ -47,7 +47,11 @@ def _issue(db: Session, user: User, response: Response, request: Request, family
 @router.get("/config")
 def auth_config():
     """Public: what the login page may offer."""
-    return {"registration_open": get_settings().allow_registration}
+    s = get_settings()
+    # which kind of data each market uses (provider names only — no keys): lets an operator confirm a deployment is not
+    # running on SAMPLE (DEMO_) defaults because its environment variables were never set
+    return {"registration_open": s.allow_registration, "environment": s.environment,
+            "data": {"NSE": s.market_data_provider, "NIFTY_OPTIONS": s.options_data_provider, "CRYPTO": s.crypto_data_provider}}
 
 
 @router.post("/register", response_model=UserOut, status_code=201)
