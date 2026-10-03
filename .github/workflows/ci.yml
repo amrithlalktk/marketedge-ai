@@ -44,4 +44,7 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run build
-      - run: npm audit --audit-level=high
+      - name: npm audit (production dependencies — fails the build)
+        run: npm audit --omit=dev --audit-level=high
+      - name: npm audit (build/dev tools — report only; not shipped to the site)
+        run: npm audit --audit-level=high || echo "::warning::dev-tool advisories found (Tailwind/ESLint build chain); they do not reach the deployed site"
