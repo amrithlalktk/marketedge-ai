@@ -22,7 +22,7 @@ Run this on your computer:
 
 ```sh
 python3 -c "import secrets;print('SECRET_KEY=' + secrets.token_hex(32))"
-python3 -c "from cryptography.fernet import Fernet;print('ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
+python3 -c "import base64,os;print('ENCRYPTION_KEY=' + base64.urlsafe_b64encode(os.urandom(32)).decode())"
 ```
 
 Keep both values. **Use the same values in Vercel and GitHub.** The encryption key protects your Upstox token in the database, so if the two places don't match, the daily job can't read the token.
