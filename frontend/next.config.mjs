@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
-const API_URL = (process.env.API_URL || "http://localhost:8000").replace(/\/$/, "");
+// API_URL: two-project / Docker setups. BACKEND_URL: injected by the Vercel Services binding (single deployment, private backend).
+const API_URL = (process.env.API_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
 const isDev = process.env.NODE_ENV !== "production";
 // Next.js injects inline bootstrap scripts, so script-src needs 'unsafe-inline' without a nonce setup;

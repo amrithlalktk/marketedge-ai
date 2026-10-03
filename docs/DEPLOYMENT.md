@@ -6,8 +6,7 @@ This guide sets up a free hosting of MarketEdge AI for one user. It is written f
 
 | Piece | Runs on | What it does |
 |---|---|---|
-| Website (Next.js) | **Vercel** project 1, root folder `frontend/` | The pages. It proxies `/api/v1/*` to the API, so the browser only ever talks to one address. |
-| API (FastAPI) | **Vercel** project 2, root folder `backend/` | Serverless functions with a 60 s limit. They only read prepared results. |
+| Website (Next.js) + API (FastAPI) | **One Vercel project** (Vercel Services, configured by the root `vercel.json`) | The site serves the pages and proxies `/api/v1/*` to the API. The API is a **private** service: only the website can reach it. |
 | Database | **Neon** Postgres (free 0.5 GB) | Everything: prices, scans, users and encrypted provider keys. |
 | Daily pipeline | **GitHub Actions** (`.github/workflows/daily.yml`) | Runs NSE at 18:30 IST on weekdays (prices → scan → NIFTY options → daily ideas message) and crypto at 06:00 IST every day. |
 
@@ -55,18 +54,18 @@ In the repo, go to Settings → Secrets and variables → Actions.
 
 The provider defaults already suit Upstox and Binance.
 
-## Step 2: API on Vercel
-1. Vercel → **Add New → Project** → import this repo.
-2. Set **Root Directory** to `backend`. Python is used, and `vercel.json` sends every request to the FastAPI app.
-3. Add these environment variables:
+## Step 2: One Vercel project (website + API)
+1. Vercel → **Add New → Project** → import this repo. Leave **Root Directory empty** (the repo root). The root `vercel.json` defines two services: `frontend` (Next.js) and `backend` (FastAPI `app.main:app`). The website reaches the API through a private binding (`BACKEND_URL`).
+2. Add a Neon database: in the project, go to **Storage → Create → Neon**, or paste your own URL. Any of `postgres://`, `postgresql://` or `postgresql+psycopg://` works.
+3. Add these environment variables (they apply to both services):
 
 ```
-ENVIRONMENT=production
-COOKIE_SECURE=true
 DATABASE_URL=<Neon pooled URL>
 DB_NULL_POOL=true
 SECRET_KEY=<same as GitHub>
 ENCRYPTION_KEY=<same as GitHub>
+ENVIRONMENT=production
+COOKIE_SECURE=true
 MARKETS_ENABLED=NSE,CRYPTO
 MARKET_DATA_PROVIDER=upstox
 OPTIONS_DATA_PROVIDER=upstox
@@ -79,13 +78,15 @@ BENCHMARK_CRYPTO=BTCUSDT
 ALLOW_REGISTRATION=false
 JOB_RUNNER=github
 GITHUB_REPO=<owner>/<repo>
-GITHUB_DISPATCH_TOKEN=<fine-grained token, see below>
-CORS_ORIGINS=https://<your-website>.vercel.app
-PUBLIC_APP_URL=https://<your-website>.vercel.app
-UPSTOX_REDIRECT_URI=https://<your-website>.vercel.app/api/v1/upstox/callback
+GITHUB_DISPATCH_TOKEN=<optional fine-grained token, see below>
+CORS_ORIGINS=https://<your-app>.vercel.app
+PUBLIC_APP_URL=https://<your-app>.vercel.app
+UPSTOX_REDIRECT_URI=https://<your-app>.vercel.app/api/v1/upstox/callback
 ```
 
-4. Deploy, then note the API's address, for example `https://marketedge-api.vercel.app`.
+4. **Deploy**. To check it worked, open `https://<your-app>.vercel.app/api/v1/auth/config`; it should answer `{"registration_open": false}`.
+
+If you already deployed the website as its own project with Root Directory `frontend`, change that project's **Root Directory** to empty (Settings → Build and Deployment) and redeploy, or import the repo again as a new project.
 
 **`GITHUB_DISPATCH_TOKEN`** is what the app's Admin → Jobs → "Run now" button uses to start the daily workflow. To create it:
 
@@ -95,13 +96,7 @@ UPSTOX_REDIRECT_URI=https://<your-website>.vercel.app/api/v1/upstox/callback
 
 It's optional. Without it, the schedule still runs; only the button can't start it.
 
-## Step 3: Website on Vercel
-1. Vercel → **Add New → Project** → import the **same** repo again.
-2. Set **Root Directory** to `frontend`. Next.js is detected.
-3. Add the environment variable `API_URL=https://<your-api>.vercel.app`. It's used when the site is built.
-4. Deploy. This address is your app. If it differs from what you set in step 2, update `CORS_ORIGINS`, `PUBLIC_APP_URL` and `UPSTOX_REDIRECT_URI` in the API project and redeploy it.
-
-## Step 4: First run (creates the tables, your admin account and the data)
+## Step 3: First run (creates the tables, your admin account and the data)
 1. GitHub → **Actions** → **daily** → **Run workflow**, with market **CRYPTO** and full **true**. Binance data needs no key, and this first run also creates the database tables and your admin account. It takes about 5 minutes.
 2. Sign in to the website with your bootstrap email and password.
 3. Go to **Admin → Providers → Upstox** and paste your **analytics token**. It is checked with Upstox and stored encrypted in Neon.
