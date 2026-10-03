@@ -8,5 +8,8 @@
     },
     "backend": { "root": "backend/", "entrypoint": "app.main:app" }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": { "service": "frontend" } }]
+  "rewrites": [
+    { "source": "/api/v1/(.*)", "destination": { "service": "backend" } },
+    { "source": "/(.*)", "destination": { "service": "frontend" } }
+  ]
 }

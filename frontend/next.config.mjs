@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
-// API_URL: two-project / Docker setups. BACKEND_URL: injected by the Vercel Services binding (single deployment, private backend).
+// API_URL: Docker / local setups (Next proxies /api/v1 to it). On Vercel the root vercel.json routes /api/v1/* to the
+// backend service before Next.js is reached, so this rewrite is only a fallback there (BACKEND_URL from the binding).
 const API_URL = (process.env.API_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
 const isDev = process.env.NODE_ENV !== "production";
