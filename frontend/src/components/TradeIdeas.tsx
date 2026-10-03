@@ -93,11 +93,20 @@ export function TradeIdeas() {
   const stockIdeas = [...(nse.data?.items ?? []), ...(cry.data?.items ?? [])].filter((s) => s.status === "VALID");
   const loading = (optOn && opts.loading) || nse.loading || cry.loading;
   const none = !loading && optionIdeas.length === 0 && stockIdeas.length === 0;
+  // never scanned (404 "no scan yet") is not the same answer as "scanned, nothing passed"
+  const notScanned = (q: { data?: unknown; error?: { status?: number } | null }) => !q.data && q.error?.status === 404;
+  const waiting = none && [optOn ? opts : null, marketOn("NSE") ? nse : null, marketOn("CRYPTO") ? cry : null]
+    .filter((q): q is NonNullable<typeof q> => q !== null).every((q) => notScanned(q as never));
 
   return (
     <Card title="Today's trade ideas" right={<span className="text-xs text-muted">updated after each daily scan (NSE 18:30 IST)</span>}>
       {loading && optionIdeas.length + stockIdeas.length === 0 ? (
         <div className="space-y-2"><Skeleton className="h-24" /><Skeleton className="h-24" /></div>
+      ) : waiting ? (
+        <div className="space-y-1 text-sm">
+          <p className="text-base font-semibold">Waiting for the first scan</p>
+          <p className="text-muted">Ideas appear after the daily scan has run on real data (NSE 18:30 IST, crypto 06:00 IST), or after an admin runs it from Admin → Jobs.</p>
+        </div>
       ) : none ? (
         <div className="space-y-2 text-sm">
           <p className="text-base font-semibold">No trade today</p>
@@ -105,9 +114,9 @@ export function TradeIdeas() {
             No NIFTY option or stock setup passed every safety check in the latest scan. Not trading is the right call on days like this.
           </p>
           <ul className="list-disc pl-5 text-xs text-muted">
-            {opts.data?.market_message && <li>NIFTY options: {opts.data.market_message}</li>}
-            {nse.data?.market_message && <li>NSE stocks: {nse.data.market_message}</li>}
-            {cry.data?.market_message && <li>Crypto: {cry.data.market_message}</li>}
+            {opts.data?.market_message ? <li>NIFTY options: {opts.data.market_message}</li> : optOn && notScanned(opts as never) && <li>NIFTY options: not scanned yet</li>}
+            {nse.data?.market_message ? <li>NSE stocks: {nse.data.market_message}</li> : notScanned(nse as never) && <li>NSE stocks: not scanned yet</li>}
+            {cry.data?.market_message ? <li>Crypto: {cry.data.market_message}</li> : notScanned(cry as never) && <li>Crypto: not scanned yet</li>}
           </ul>
           <Link className="link text-xs" href="/setups?tab=no_trade">See the rejected candidates and why →</Link>
         </div>
