@@ -52,7 +52,7 @@ In the repo, go to Settings → Secrets and variables → Actions.
 | `DAILY_ENABLED` | `true`. Turns on the schedule; until then only manual runs happen, so nothing fails while you're still setting up. |
 | `PUBLIC_APP_URL` | optional: your website address, used in notification links |
 
-The provider defaults already suit Upstox and Binance.
+The provider defaults already suit Upstox and Binance. 
 
 ## Step 2: One Vercel project (website + API)
 1. Vercel → **Add New → Project** → import this repo. Leave **Root Directory empty** (the repo root). The root `vercel.json` defines two services: `frontend` (Next.js) and `backend` (FastAPI `app.main:app`). The website reaches the API through a private binding (`BACKEND_URL`).
