@@ -42,7 +42,7 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
       ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
-      BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+      BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.BOOTSTRAP_ADMIN_EMAIL || vars.BOOTSTRAP_ADMIN_EMAIL }}  # an email is not secret: either works
       BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
       MARKET_DATA_PROVIDER: ${{ vars.MARKET_DATA_PROVIDER || 'upstox' }}
       OPTIONS_DATA_PROVIDER: ${{ vars.OPTIONS_DATA_PROVIDER || 'upstox' }}
