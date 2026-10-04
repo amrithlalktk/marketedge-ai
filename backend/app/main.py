@@ -63,9 +63,23 @@ async def lifespan(_app: FastAPI):
     yield
 
 
+def _misconfigured_app(reason: str) -> FastAPI:
+    logging.getLogger(__name__).error("refusing to serve: %s", reason)
+    bad = FastAPI(title="MarketEdge AI API (misconfigured)", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @bad.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    def misconfigured(path: str):
+        return JSONResponse({"detail": f"Server misconfigured: {reason}"}, status_code=503)
+
+    return bad
+
+
 def create_app() -> FastAPI:
     s = get_settings()
-    s.validate_production()
+    try:
+        s.validate_production()
+    except RuntimeError as exc:  # serve a clear 503 instead of crashing every invocation (the message names settings, never values)
+        return _misconfigured_app(str(exc))
     app = FastAPI(
         lifespan=lifespan,
         title=f"{s.app_name} API",

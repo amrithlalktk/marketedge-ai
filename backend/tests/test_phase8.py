@@ -380,3 +380,15 @@ def test_database_url_accepts_neon_style_prefixes():
     for raw in ("postgres://u:p@h/db?sslmode=require", "postgresql://u:p@h/db?sslmode=require", "postgresql+psycopg://u:p@h/db?sslmode=require"):
         assert Settings(database_url=raw).database_url == "postgresql+psycopg://u:p@h/db?sslmode=require"
     assert Settings(database_url="sqlite:///x.db").database_url == "sqlite:///x.db"
+
+
+def test_production_misconfiguration_is_reported_not_crashed(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    s = get_settings()
+    monkeypatch.setattr(s, "environment", "production")
+    monkeypatch.setattr(s, "encryption_key", None)
+    r = TestClient(create_app()).get("/api/v1/auth/config")
+    assert r.status_code == 503 and "ENCRYPTION_KEY" in r.json()["detail"]
