@@ -48,9 +48,22 @@ def _issue(db: Session, user: User, response: Response, request: Request, family
 def auth_config():
     """Public: what the login page may offer."""
     s = get_settings()
+    db_status = "ok"
+    try:  # reachability only: the error TYPE, never the address or credentials
+        from sqlalchemy import text
+
+        from app.core.db import engine
+
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+            if engine.dialect.name == "postgresql":
+                if not c.execute(text("SELECT to_regclass('public.users')")).scalar():
+                    db_status = "empty (run the GitHub 'daily' workflow once to create the tables and your account)"
+    except Exception as exc:
+        db_status = f"unreachable ({type(exc).__name__})"
     # which kind of data each market uses (provider names only — no keys): lets an operator confirm a deployment is not
     # running on SAMPLE (DEMO_) defaults because its environment variables were never set
-    return {"registration_open": s.allow_registration, "environment": s.environment,
+    return {"registration_open": s.allow_registration, "environment": s.environment, "database": db_status,
             "data": {"NSE": s.market_data_provider, "NIFTY_OPTIONS": s.options_data_provider, "CRYPTO": s.crypto_data_provider}}
 
 

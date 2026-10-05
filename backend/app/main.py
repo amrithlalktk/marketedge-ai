@@ -32,14 +32,17 @@ def _seed() -> None:
     from app.core.db import engine
 
     pg = engine.dialect.name == "postgresql"
-    with (engine.connect() if pg else nullcontext()) as lock_conn:
-        if pg:
-            lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _SEED_LOCK})
-        try:
-            _seed_locked()
-        finally:
+    try:  # an unreachable / unconfigured database must not take the whole app down at start-up
+        with (engine.connect() if pg else nullcontext()) as lock_conn:
             if pg:
-                lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _SEED_LOCK})
+                lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _SEED_LOCK})
+            try:
+                _seed_locked()
+            finally:
+                if pg:
+                    lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _SEED_LOCK})
+    except Exception as exc:
+        logging.getLogger(__name__).error("start-up seeding skipped (database unavailable): %s", type(exc).__name__)
 
 
 def _seed_locked() -> None:
