@@ -164,17 +164,21 @@ def daily_ideas_text(db: Session) -> Optional[dict]:
 
 
 def daily_ideas_alerts(db: Session) -> int:
-    """Send the digest once per session to every active 'daily_ideas' alert (idempotent via last_bar = session date)."""
+    """Send the digest once per session to every active 'daily_ideas' alert (idempotent via last_bar = "session date|live|sample")."""
     digest = daily_ideas_text(db)
     if digest is None:
         return 0
+    from app.services.scan_service import provider_is_sample
+
+    # once per session AND kind of data: a SAMPLE digest from before the switch to real data never blocks the real one
+    key = f"{digest['as_of']}|{'sample' if provider_is_sample('NSE') else 'live'}"
     now, sent = datetime.now(timezone.utc), 0
     for a in db.scalars(select(Alert).where(Alert.status == "active", Alert.kind == "daily_ideas")):
-        if a.last_bar == digest["as_of"]:
+        if a.last_bar == key:
             continue
         notify(db, a.user_id, digest["title"], digest["body"] + (f" — {a.note}" if a.note else ""), link="/",
                payload={"alert_id": a.id, "as_of": digest["as_of"], "ideas": digest["ideas"]}, channels=a.channels or None, alert_id=a.id)
-        a.last_bar, a.last_triggered_at, a.trigger_count = digest["as_of"], now, a.trigger_count + 1
+        a.last_bar, a.last_triggered_at, a.trigger_count = key, now, a.trigger_count + 1
         sent += 1
     db.commit()
     return sent

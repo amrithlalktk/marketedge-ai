@@ -183,7 +183,8 @@ def _why_no_digest(db: Session) -> str:
     counts = dict(db.execute(select(Alert.status, func.count()).where(Alert.kind == "daily_ideas").group_by(Alert.status)).all())
     if not counts.get("active"):
         return f"no active daily_ideas alert (by status: {counts or 'none'}); set BOOTSTRAP_ADMIN_EMAIL/PASSWORD or add one in Alerts"
-    return f"already sent for the {nse.as_of} session"
+    sent = [a.last_bar for a in db.scalars(select(Alert).where(Alert.kind == "daily_ideas", Alert.status == "active"))]
+    return f"already sent for the {nse.as_of} session (sent keys: {sent})"
 
 
 def dispatch_github(market: str, full: bool = False) -> dict:

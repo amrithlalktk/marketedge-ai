@@ -379,6 +379,27 @@ def test_bootstrap_admin_gets_daily_ideas_alert_once(app_client):
         db.close()
 
 
+def test_sample_digest_does_not_block_the_real_one(app_client, scanned, monkeypatch):
+    """A SAMPLE 'daily ideas' message sent before the switch to real data must not count as today's real message."""
+    from app.cli import ensure_admin, ensure_daily_ideas_alert
+    from app.core.db import SessionLocal
+    from app.services import scan_service
+    from app.services.alert_service import daily_ideas_alerts
+
+    db = SessionLocal()
+    try:
+        ensure_daily_ideas_alert(db, ensure_admin(db, "digest@example.com", "D1gest!Strong-Pass"))
+        monkeypatch.setattr(scan_service, "matches_provider", lambda market, is_sample: True)
+        monkeypatch.setattr(scan_service, "provider_is_sample", lambda market: True)
+        daily_ideas_alerts(db)
+        assert daily_ideas_alerts(db) == 0  # once per session
+        monkeypatch.setattr(scan_service, "provider_is_sample", lambda market: False)
+        assert daily_ideas_alerts(db) >= 1  # real data: sent again for the same session date
+        assert daily_ideas_alerts(db) == 0
+    finally:
+        db.close()
+
+
 def test_database_url_accepts_neon_style_prefixes():
     for raw in ("postgres://u:p@h/db?sslmode=require", "postgresql://u:p@h/db?sslmode=require", "postgresql+psycopg://u:p@h/db?sslmode=require"):
         assert Settings(database_url=raw).database_url == "postgresql+psycopg://u:p@h/db?sslmode=require"
