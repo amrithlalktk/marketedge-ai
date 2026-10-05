@@ -161,9 +161,29 @@ def daily(db: Session, market: str, full: bool = False) -> dict:
         from app.services.alert_service import daily_ideas_alerts
 
         out["daily_ideas_sent"] = daily_ideas_alerts(db)
+        if not out["daily_ideas_sent"]:
+            out["daily_ideas_note"] = _why_no_digest(db)
     out["retry_notifications"] = run_job(db, "retry_notifications", retry_notifications).status
     out["retention"] = run_job(db, "retention", retention).status
     return out
+
+
+def _why_no_digest(db: Session) -> str:
+    """Plain reason the daily-ideas message was not sent (printed in the GitHub Actions log; no personal data)."""
+    from sqlalchemy import func, select
+
+    from app.models import Alert, ScanRun
+    from app.services.scan_service import latest_run
+
+    nse = latest_run(db, "NSE")
+    if nse is None:
+        runs = [(r.status, (r.stats or {}).get("is_sample")) for r in db.scalars(
+            select(ScanRun).where(ScanRun.market == "NSE").order_by(ScanRun.id.desc()).limit(3))]
+        return f"no NSE scan matching the current provider (latest runs: status, is_sample = {runs})"
+    counts = dict(db.execute(select(Alert.status, func.count()).where(Alert.kind == "daily_ideas").group_by(Alert.status)).all())
+    if not counts.get("active"):
+        return f"no active daily_ideas alert (by status: {counts or 'none'}); set BOOTSTRAP_ADMIN_EMAIL/PASSWORD or add one in Alerts"
+    return f"already sent for the {nse.as_of} session"
 
 
 def dispatch_github(market: str, full: bool = False) -> dict:
