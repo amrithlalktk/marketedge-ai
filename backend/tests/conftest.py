@@ -82,4 +82,24 @@ def any_signal_id(client, headers, api="/api/v1"):
         items = client.get(f"{api}/signals?status={status}", headers=headers).json().get("items") or []
         if items:
             return items[0]["id"]
-    raise AssertionError("the session scan produced no signal at all")
+    # synthetic data produced no setup today: persist one clearly-synthetic NO_TRADE signal on the latest scan
+    from datetime import date
+
+    from app.core.db import SessionLocal
+    from app.models import Instrument, Signal
+    from app.services.scan_service import latest_run
+
+    db = SessionLocal()
+    try:
+        run, ins = latest_run(db, "NSE"), db.query(Instrument).filter(Instrument.symbol == "DEMO_001").one()
+        payload = {"symbol": ins.symbol, "market": "NSE", "direction": "LONG", "status": "NO_TRADE", "strategy_id": "breakout_volume",
+                   "strategy_name": "Breakout + Volume Confirmation", "strategy": {"id": "breakout_volume", "name": "Breakout + Volume Confirmation"}, "as_of": str(date.today()), "current_price": 100.0,
+                   "entry_zone": [100.0, 101.0], "stop": 95.0, "targets": [107.5, 115.0, 122.5], "score": 50.0, "rr_t2": 3.0,
+                   "probability": {}, "checks": [], "data": {"is_sample": True}}
+        sg = Signal(scan_run_id=run.id, instrument_id=ins.id, symbol=ins.symbol, market="NSE", strategy_key="breakout_volume", direction="LONG",
+                    status="NO_TRADE", as_of=date.today(), score=50.0, rr_t2=3.0, sample_size=0, is_sample_data=True, payload=payload)
+        db.add(sg)
+        db.commit()
+        return sg.id
+    finally:
+        db.close()

@@ -172,6 +172,9 @@ def test_scan_prewarms_and_candles_cache_tracks_last_bar(app_client, admin_heade
     from app.models import DataStatus, Instrument
     from app.services.scan_service import latest_run
 
+    # a watchlisted stock is always pre-warmed (the synthetic data may produce no setup on some dates)
+    wl = app_client.post("/api/v1/watchlists", json={"name": "Prewarm check"}, headers=admin_headers).json()
+    app_client.post(f"/api/v1/watchlists/{wl['id']}/items", json={"symbol": "DEMO_001"}, headers=admin_headers)
     # run a scan here: other tests (settings changes, rescans) clear the cache after the session scan
     r = app_client.post("/api/v1/admin/jobs/scan?market=NSE", headers=admin_headers)
     assert app_client.get(f"/api/v1/admin/jobs/{r.json()['job_id']}", headers=admin_headers).json()["status"] == "done"
@@ -181,7 +184,7 @@ def test_scan_prewarms_and_candles_cache_tracks_last_bar(app_client, admin_heade
         from app.models import Signal
 
         sg = db.query(Signal).filter(Signal.scan_run_id == run.id).order_by((Signal.status != "VALID"), Signal.score.desc()).first()
-        sym = sg.symbol
+        sym = sg.symbol if sg else "DEMO_001"
         assert get_cache().get_json(f"me:analysis:{sym}:hybrid:{run.id}:{_date.today()}") is not None  # warmed by the scan
         r1 = app_client.get(f"/api/v1/stocks/{sym}/candles", headers=admin_headers).json()
         ins = db.query(Instrument).filter(Instrument.symbol == sym).one()
