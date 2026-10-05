@@ -150,6 +150,33 @@ def _file_secrets() -> dict:
     return out
 
 
+# Production defaults for a Vercel deployment of the lite build. Vercel sets VERCEL_ENV and the project's domain / git repo
+# for every deployment, so only DATABASE_URL (from the Neon integration), SECRET_KEY and ENCRYPTION_KEY have to be added
+# by hand. Anything set explicitly in the environment still wins.
+_VERCEL_PRODUCTION = {
+    "environment": "production", "cookie_secure": "true", "db_null_pool": "true", "markets_enabled": "NSE,CRYPTO",
+    "market_data_provider": "upstox", "options_data_provider": "upstox", "crypto_data_provider": "binance",
+    "benchmark_symbol": "NIFTY50", "vix_symbol": "INDIAVIX", "options_underlying": "NIFTY50", "options_display_name": "NIFTY 50",
+    "benchmark_crypto": "BTCUSDT", "allow_registration": "false", "job_runner": "github",
+}
+
+
+def _vercel_defaults() -> dict:
+    import os
+
+    if os.environ.get("VERCEL_ENV") != "production":
+        return {}
+    out = dict(_VERCEL_PRODUCTION)
+    domain = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL")  # e.g. marketedge-ai-beta.vercel.app (no scheme)
+    if domain:
+        url = f"https://{domain}"
+        out.update(cors_origins=url, public_app_url=url, upstox_redirect_uri=f"{url}/api/v1/upstox/callback")
+    owner, slug = os.environ.get("VERCEL_GIT_REPO_OWNER"), os.environ.get("VERCEL_GIT_REPO_SLUG")
+    if owner and slug:
+        out["github_repo"] = f"{owner}/{slug}"
+    return {k: v for k, v in out.items() if not os.environ.get(k.upper())}  # explicit env vars always win
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings(**_file_secrets())
+    return Settings(**{**_vercel_defaults(), **_file_secrets()})

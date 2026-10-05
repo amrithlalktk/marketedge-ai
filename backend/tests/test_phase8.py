@@ -395,3 +395,21 @@ def test_production_misconfiguration_is_reported_not_crashed(monkeypatch):
     monkeypatch.setattr(s, "encryption_key", None)
     r = TestClient(create_app()).get("/api/v1/auth/config")
     assert r.status_code == 503 and "ENCRYPTION_KEY" in r.json()["detail"]
+
+
+def test_vercel_production_defaults(monkeypatch):
+    from app.core import config
+
+    for k in ("ENVIRONMENT", "MARKET_DATA_PROVIDER", "CORS_ORIGINS", "GITHUB_REPO", "ALLOW_REGISTRATION"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("VERCEL_ENV", "production")
+    monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", "me-app.vercel.app")
+    monkeypatch.setenv("VERCEL_GIT_REPO_OWNER", "someone")
+    monkeypatch.setenv("VERCEL_GIT_REPO_SLUG", "marketedge-ai")
+    monkeypatch.setenv("CRYPTO_DATA_PROVIDER", "sample")            # an explicit value still wins
+    s = config.Settings(**config._vercel_defaults())
+    assert s.environment == "production" and s.market_data_provider == "upstox" and s.crypto_data_provider == "sample"
+    assert s.cors_origins == ["https://me-app.vercel.app"] and s.upstox_redirect_uri == "https://me-app.vercel.app/api/v1/upstox/callback"
+    assert s.github_repo == "someone/marketedge-ai" and s.allow_registration is False and s.job_runner == "github" and s.cookie_secure
+    monkeypatch.setenv("VERCEL_ENV", "preview")
+    assert config._vercel_defaults() == {}
