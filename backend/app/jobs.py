@@ -158,9 +158,10 @@ def daily(db: Session, market: str, full: bool = False) -> dict:
     out["scan"] = run_job(db, "scan", scan, market=market).status
     if market == "NSE":
         out["options"] = run_job(db, "options", options).status
-        from app.services.alert_service import daily_ideas_alerts
+        from app.services.alert_service import daily_ideas_alerts, daily_ideas_text
 
         out["daily_ideas_sent"] = daily_ideas_alerts(db)
+        out["daily_ideas"] = daily_ideas_text(db)  # also in the run log
         if not out["daily_ideas_sent"]:
             out["daily_ideas_note"] = _why_no_digest(db)
     out["retry_notifications"] = run_job(db, "retry_notifications", retry_notifications).status
