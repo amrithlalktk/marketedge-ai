@@ -46,6 +46,27 @@ def ensure_daily_ideas_alert(db: Session, user: User) -> None:
         db.commit()
 
 
+def options_report(db: Session) -> dict:
+    """Read-only: why the latest NIFTY options scan did (not) publish an idea."""
+    from app.models import MarketSnapshot
+
+    snap = db.scalar(select(MarketSnapshot).where(MarketSnapshot.market == "NFO", MarketSnapshot.kind == "options").order_by(MarketSnapshot.id.desc()))
+    if snap is None:
+        return {"options": "no options scan stored yet"}
+    o = snap.payload or {}
+
+    def failed(checks):
+        return [f"{c['name']}: {c.get('detail', '')}" for c in checks or [] if not c["passed"] and c["severity"] == "block"]
+
+    return {"as_of": str(snap.as_of), "status": o.get("status"), "market_message": o.get("market_message"),
+            "spot": (o.get("underlying") or {}).get("spot"), "market_state": (o.get("market_state") or {}).get("direction"),
+            "iv_percentile": (o.get("iv") or {}).get("iv_percentile"),
+            "nifty_setups": [{"strategy": u["strategy"]["name"], "direction": u["direction"], "status": u["status"], "failed": failed(u.get("checks"))}
+                             for u in o.get("underlying_setups") or []],
+            "option_setups": [{"contract": (x.get("contract") or {}).get("label"), "status": x["status"], "reason": x.get("reason"),
+                               "failed": failed(x.get("checks"))} for x in o.get("option_setups") or []]}
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="marketedge")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -62,6 +83,7 @@ def main() -> None:
     sc.add_argument("--market", default="NSE")
     sub.add_parser("options")
     sub.add_parser("bootstrap-sample")
+    sub.add_parser("report")
     args = p.parse_args()
 
     from app import jobs
@@ -88,6 +110,8 @@ def main() -> None:
             print(json.dumps(jobs.scan(db, args.market), indent=2, default=str))
         elif args.cmd == "options":
             print(json.dumps(jobs.options(db), indent=2, default=str))
+        elif args.cmd == "report":
+            print(json.dumps(options_report(db), indent=2, default=str))
         elif args.cmd == "bootstrap-sample":
             if s.market_data_provider != "sample":
                 raise SystemExit("bootstrap-sample requires MARKET_DATA_PROVIDER=sample")

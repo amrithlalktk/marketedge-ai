@@ -24,6 +24,26 @@ def index_analyzer(analyzer: Analyzer) -> Analyzer:
     return Analyzer(replace(analyzer.cfg, levels=INDEX_LEVELS))
 
 
+def _failed(checks) -> list:
+    return [c["name"] for c in checks or [] if not c["passed"] and c["severity"] == "block"]
+
+
+def no_trade_reason(underlying_setups: list, option_setups: list) -> str:
+    """Why there is no NIFTY option idea today, in one sentence."""
+    if not underlying_setups:
+        return "NO TRADE: none of the NIFTY strategies triggered on the latest index candle (no option idea without one)."
+    valid = [u for u in underlying_setups if u["status"] == "VALID"]
+    if not valid:
+        parts = [f"{u['strategy']['name']} ({u['direction'].lower()}) failed {', '.join(_failed(u.get('checks'))[:3]) or 'its checks'}"
+                 for u in underlying_setups[:2]]
+        return "NO TRADE: a NIFTY setup triggered but did not pass: " + "; ".join(parts) + "."
+    parts = []
+    for o in option_setups[:2]:
+        why = o.get("reason") or ", ".join(n.removeprefix("Underlying: ") for n in _failed(o.get("checks"))[:3]) or "its checks"
+        parts.append(f"{(o.get('contract') or {}).get('label', o.get('direction', 'contract'))}: {why}")
+    return "NO TRADE: the NIFTY setup passed, but no option contract passed its checks (" + "; ".join(parts) + ")."
+
+
 def index_events(analyzer: Analyzer, index_features: pd.DataFrame, symbol: str, regime_df: pd.DataFrame) -> pd.DataFrame:
     return index_analyzer(analyzer).build_events({symbol: index_features}, regime_df, list(INDEX_STRATEGIES.values()))
 
@@ -121,7 +141,7 @@ def analyze_options(*, analyzer: Analyzer, symbol: str, display_name: str, index
         "option_setups": setups,
         "strategies": strategies,
         "status": status,
-        "market_message": None if status == "VALID" else "NO TRADE: no option setup passed every underlying and contract check.",
+        "market_message": None if status == "VALID" else no_trade_reason(und, setups),
         "events": {"upcoming": [], "high_impact_before_expiry": {str(k): v for k, v in high_before.items() if v},
                    "note": "No economic calendar configured: macro-event risk before expiry is not checked."},
         "config": {"chain": chain_cfg.__dict__, "selector": opt_cfg.to_dict()},

@@ -12,7 +12,7 @@ on:
       market:
         description: "Market"
         type: choice
-        options: [NSE, CRYPTO]
+        options: [NSE, CRYPTO, REPORT]   # REPORT: read-only, prints why the latest NIFTY options scan did (not) publish an idea
         default: NSE
       full:
         description: "Full history reload (first run: true)"
@@ -63,5 +63,6 @@ jobs:
         run: alembic upgrade head
       - name: run ${{ env.MARKET }} pipeline
         run: |
+          if [ "$MARKET" = "REPORT" ]; then python -m app.cli report; exit 0; fi
           ARGS="$MARKET"; [ "$FULL" = "true" ] && ARGS="$ARGS --full"
           python -m app.cli daily $ARGS

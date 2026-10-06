@@ -337,3 +337,29 @@ def test_history_lists_stock_ideas(app_client, admin_headers, scanned):
         m = i["move"]
         assert m["of"] == i["label"] and m["price_now"] is not None and m["change_pct"] == round(100 * (m["price_now"] / m["price_then"] - 1), 2)
     assert app_client.get(f"{API}/signals/history?market=XX", headers=admin_headers).status_code == 422
+
+
+def test_no_trade_reason_says_why():
+    from engine.options.analyzer import no_trade_reason
+
+    assert "none of the NIFTY strategies triggered" in no_trade_reason([], [])
+    u = {"status": "NO_TRADE", "direction": "LONG", "strategy": {"name": "Breakout"},
+         "checks": [{"name": "Trend filter", "passed": False, "severity": "block"}, {"name": "Volume", "passed": False, "severity": "warn"}]}
+    msg = no_trade_reason([u], [])
+    assert "Breakout (long) failed Trend filter" in msg and "Volume" not in msg
+    ok = {**u, "status": "VALID", "checks": []}
+    msg = no_trade_reason([ok], [{"status": "NO_TRADE", "direction": "BULLISH", "reason": "No CE contract with 7–45 days to expiry in the delta band"}])
+    assert "no option contract passed" in msg and "delta band" in msg
+
+
+def test_options_report(app_client, options_ready):
+    from app.cli import options_report
+    from app.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        r = options_report(db)
+    finally:
+        db.close()
+    assert r["status"] in ("VALID", "NO_TRADE") and isinstance(r["nifty_setups"], list) and isinstance(r["option_setups"], list)
+    assert r["status"] == "VALID" or r["market_message"].startswith("NO TRADE:")

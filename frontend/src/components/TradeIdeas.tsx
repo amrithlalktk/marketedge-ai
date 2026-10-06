@@ -144,6 +144,13 @@ export function TradeIdeas() {
         </div>
       ) : (
         <ul className="space-y-2">
+          {optOn && optionIdeas.length === 0 && (
+            <li className="rounded-md border border-dashed border-edge p-3 text-sm">
+              <span className="font-semibold">NIFTY options: no trade today.</span>{" "}
+              <span className="text-muted">{opts.data?.market_message?.replace(/^NO TRADE:\s*/, "") ?? (notScanned(opts as never) ? "Not scanned yet." : "")}</span>{" "}
+              <Link className="link text-xs" href="/options?tab=setups">Details →</Link>
+            </li>
+          )}
           {optionIdeas.map((o, i) => <OptionIdea key={`o${i}`} o={o} quote={o.underlying ? live?.quotes[quoteKey("NFO", o.underlying.symbol)] : undefined} />)}
           {stockIdeas.map((s) => <StockIdea key={`${s.market}${s.id}`} s={s} quote={live?.quotes[quoteKey(s.market, s.symbol)]} />)}
         </ul>
