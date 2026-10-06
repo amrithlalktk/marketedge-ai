@@ -59,7 +59,7 @@ def live_quotes(db: Session, items: List[str]) -> dict:
     from app.services.scan_service import provider_is_sample
 
     items = sorted({i for i in items if ":" in i})[:MAX_ITEMS]
-    key = "live:" + hashlib.sha1(",".join(items).encode()).hexdigest()
+    key = "live:" + hashlib.sha256(",".join(items).encode()).hexdigest()[:32]
     cached = get_cache().get_json(key)
     if cached is not None:
         return cached
