@@ -67,6 +67,29 @@ def options_report(db: Session) -> dict:
                                "failed": failed(x.get("checks"))} for x in o.get("option_setups") or []]}
 
 
+def storage_report(db: Session) -> dict:
+    """Read-only: database size, the largest tables and the date range of the main history tables (Postgres only)."""
+    from sqlalchemy import text
+
+    if db.bind.dialect.name != "postgresql":
+        return {"skipped": "not Postgres"}
+    q = lambda sql: db.execute(text(sql)).all()  # noqa: E731
+    out = {"database_mb": round(q("SELECT pg_database_size(current_database())")[0][0] / 2**20, 1),
+           "tables_mb": {r[0]: round(r[1] / 2**20, 1) for r in q(
+               "SELECT relname, pg_total_relation_size(relid) FROM pg_statio_user_tables ORDER BY 2 DESC LIMIT 12")}}
+    from sqlalchemy import func
+
+    from app.models import MarketBar, MarketSnapshot, ScanRun, Signal, SignalOutcome
+
+    for name, col in (("prices", MarketBar.ts), ("signals", Signal.as_of), ("snapshots", MarketSnapshot.as_of), ("scan_runs", ScanRun.started_at)):
+        n, lo, hi = db.execute(select(func.count(), func.min(col), func.max(col))).one()
+        out[name] = {"rows": n, "from": lo, "to": hi}
+    out["signals_by_status"] = dict(db.execute(select(Signal.status, func.count()).group_by(Signal.status)).all())
+    out["tracked_ideas"] = db.scalar(select(func.count()).select_from(SignalOutcome))
+    out["scan_runs_by_market"] = dict(db.execute(select(ScanRun.market, func.count()).group_by(ScanRun.market)).all())
+    return out
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="marketedge")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -111,7 +134,7 @@ def main() -> None:
         elif args.cmd == "options":
             print(json.dumps(jobs.options(db), indent=2, default=str))
         elif args.cmd == "report":
-            print(json.dumps(options_report(db), indent=2, default=str))
+            print(json.dumps({"options": options_report(db), "storage": storage_report(db)}, indent=2, default=str))
         elif args.cmd == "bootstrap-sample":
             if s.market_data_provider != "sample":
                 raise SystemExit("bootstrap-sample requires MARKET_DATA_PROVIDER=sample")
