@@ -180,12 +180,18 @@ def run_options(db: Session, today: Optional[date] = None) -> ScanRun:
                           status=st["status"], as_of=date.fromisoformat(st["as_of"]), score=st["score"], rr_t2=st["rr"],
                           t1_hit_rate=p.get("t1_hit_rate"), sample_size=p.get("sample_size") or 0, is_sample_data=bool(meta["is_sample"]),
                           payload=_json_safe(st)))
+        db.flush()
+        track_option_outcomes(db)
         db.add(MarketSnapshot(scan_run_id=run.id, market=MARKET, kind="options", as_of=ts.astimezone(ch_ist()).date(), payload=_json_safe(out)))
         run.as_of = ts.astimezone(ch_ist()).date()
         run.stats = {"is_sample": bool(meta["is_sample"]), "option_setups": len(out["option_setups"]), "valid": sum(x["status"] == "VALID" for x in out["option_setups"]),
                      "strategies_proposed": len(out["strategies"]["proposed"]), "index_events": int(len(events)), "status": out["status"],
                      "market_message": out["market_message"]}
         run.status, run.finished_at = "done", datetime.now(timezone.utc)
+        db.commit()
+        from app.services.scan_service import resolve_outcomes
+
+        run.stats = {**run.stats, "outcomes_resolved": resolve_outcomes(db, {und.symbol: fi}, cfg.backtest, cfg.levels.max_chase_atr, MARKET)}
         db.commit()
         get_cache().invalidate_prefix("me:opt:")
         try:
@@ -242,3 +248,21 @@ def evaluate_legs(db: Session, legs: List[dict]) -> dict:
     return {"legs": [lg.to_dict() for lg in built], "expiry": str(e), "spot": snap["spot"], "lot_size": snap["lot_size"],
             "as_of": snap["as_of"].astimezone(ch_ist()).isoformat(), **a,
             **capital_and_reward(a, built, float(sub["forward"].iloc[0]), snap["lot_size"])}
+
+
+def track_option_outcomes(db: Session) -> int:
+    """Start tracking every published (VALID) NIFTY option idea once (a rescan of the same session republishes it).
+    Also picks up ideas published before tracking existed."""
+    from app.models import SignalOutcome
+
+    tracked = {(sym, key, d) for sym, key, d in db.execute(
+        select(Signal.symbol, Signal.strategy_key, Signal.as_of).join(SignalOutcome, SignalOutcome.signal_id == Signal.id).where(Signal.market == MARKET))}
+    n = 0
+    for sig in db.scalars(select(Signal).where(Signal.market == MARKET, Signal.status == "VALID").order_by(Signal.id)):
+        k = (sig.symbol, sig.strategy_key, sig.as_of)
+        if k not in tracked:
+            db.add(SignalOutcome(signal_id=sig.id, status="open"))
+            tracked.add(k)
+            n += 1
+    db.flush()
+    return n

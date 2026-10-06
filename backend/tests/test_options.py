@@ -276,3 +276,61 @@ def test_oi_buildup_keys_include_expiry():
     near = ch.oi_buildup(c, date(2026, 10, 6), prev)
     far = ch.oi_buildup(c, date(2026, 10, 13), prev)
     assert {x["interpretation"] for x in near} == {"Long buildup"} and {x["interpretation"] for x in far} == {"Short buildup"}
+
+
+def test_option_ideas_are_tracked_and_shown_in_history(app_client, admin_headers, options_ready):
+    """A published NIFTY option idea is tracked once and resolved on the NIFTY levels that triggered it."""
+    from datetime import date
+
+    import pandas as pd
+    from sqlalchemy import select
+
+    from app.core.db import SessionLocal
+    from app.models import Instrument, ScanRun, Signal, SignalOutcome
+    from app.services.options_service import track_option_outcomes
+    from app.services.scan_service import resolve_outcomes
+    from app.services.settings_service import engine_config
+    from engine.features import build_features
+    from tests.conftest import make_user
+
+    idx = pd.bdate_range("2026-01-01", periods=90)
+    close = pd.Series([100.0 + i for i in range(90)], index=idx)  # steady rise: the long trigger reaches both targets
+    f = build_features(pd.DataFrame({"open": close - 0.5, "high": close + 0.5, "low": close - 1.0, "close": close, "volume": 1e6}, index=idx))
+    t = 60
+    c = float(close.iloc[t])
+    db = SessionLocal()
+    try:
+        und = db.scalar(select(Instrument).where(Instrument.symbol == "DEMO_NIFTY50"))
+        run = db.scalar(select(ScanRun).where(ScanRun.market == "NFO").order_by(ScanRun.id.desc()))
+        payload = {"contract": {"label": "NIFTY 50 TEST CE"}, "entry": 120.0, "stop": 80.0, "targets": [150.0, 190.0],
+                   "probability": {"t1_hit_rate": 52.0, "sample_size": 40},
+                   "underlying": {"symbol": "DEMO_NIFTY50", "strategy": {"id": "breakout_volume", "name": "Breakout"},
+                                  "entry_zone": [c, c], "stop": c - 5, "targets": [c + 2, c + 4]}}
+        for _ in range(2):  # a rescan of the same session republishes the idea
+            db.add(Signal(scan_run_id=run.id, instrument_id=und.id, symbol="NIFTY 50 TEST CE", market="NFO", strategy_key="opt:breakout_volume",
+                          direction="LONG", status="VALID", as_of=date.fromisoformat(str(idx[t].date())), score=60, rr_t2=2.0,
+                          t1_hit_rate=52.0, sample_size=40, is_sample_data=True, payload=payload))
+        db.flush()
+        track_option_outcomes(db)
+        assert track_option_outcomes(db) == 0
+        ids = [i for (i,) in db.execute(select(Signal.id).where(Signal.symbol == "NIFTY 50 TEST CE"))]
+        assert db.query(SignalOutcome).filter(SignalOutcome.signal_id.in_(ids)).count() == 1
+        cfg = engine_config(db)
+        assert resolve_outcomes(db, {"DEMO_NIFTY50": f}, cfg.backtest, cfg.levels.max_chase_atr, "NFO") >= 1
+    finally:
+        db.close()
+
+    h = app_client.get(f"{API}/signals/history?market=NFO", headers=admin_headers).json()
+    row = next(i for i in h["items"] if i["label"] == "NIFTY 50 TEST CE")
+    assert row["result"] == "target2" and row["judged_on"]["symbol"] == "DEMO_NIFTY50" and row["entry_zone"] == [120.0, 120.0]
+    assert h["summary"]["closed"] >= 1 and h["summary"]["target1_or_better"] >= 1
+    std = make_user(app_client, "histstd@example.com")
+    assert all(i["market"] != "NFO" for i in app_client.get(f"{API}/signals/history", headers=std).json()["items"])
+
+
+def test_history_lists_stock_ideas(app_client, admin_headers, scanned):
+    h = app_client.get(f"{API}/signals/history?market=NSE", headers=admin_headers).json()
+    assert set(h["summary"]) >= {"ideas", "open", "closed", "target1_rate", "stop_rate", "expected_target1_rate"}
+    for i in h["items"]:
+        assert i["market"] == "NSE" and i["result"] in ("open", "target1", "target2", "stop", "time", "not_filled")
+    assert app_client.get(f"{API}/signals/history?market=XX", headers=admin_headers).status_code == 422

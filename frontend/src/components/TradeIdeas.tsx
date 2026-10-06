@@ -131,7 +131,10 @@ export function TradeIdeas() {
           Chance = how often this exact setup reached the target before the stop in past data, with the number of cases. It is not a guarantee;
           decide your position size with the Risk calculator and always place the stop loss.
         </span>
-        {nse.data && <DataStamp asOf={nse.data.as_of} />}
+        <span className="flex items-center gap-3">
+          <Link className="link text-xs" href="/track-record">How past ideas went →</Link>
+          {nse.data && <DataStamp asOf={nse.data.as_of} />}
+        </span>
       </div>
     </Card>
   );

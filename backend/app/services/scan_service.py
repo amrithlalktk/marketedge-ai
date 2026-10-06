@@ -276,16 +276,18 @@ def resolve_outcomes(db: Session, feats: Dict[str, pd.DataFrame], bt: BacktestCo
     pending = db.execute(select(SignalOutcome, Signal).join(Signal, Signal.id == SignalOutcome.signal_id)
                          .where(SignalOutcome.status == "open", Signal.market == market)).all()
     for outcome, sig in pending:
-        f = feats.get(sig.symbol)
+        # a NIFTY option idea is judged on the index levels that triggered it (its "chance" is defined the same way)
+        p = sig.payload["underlying"] if market == "NFO" else sig.payload
+        f = feats.get(p["symbol"] if market == "NFO" else sig.symbol)
         if f is None:
             continue
         ts = pd.Timestamp(sig.as_of)
         if ts not in f.index:
             continue
         t = f.index.get_loc(ts)
-        spec = STRATEGIES.get(sig.strategy_key) or custom.get(sig.strategy_key)
+        key = sig.strategy_key.removeprefix("opt:")
+        spec = STRATEGIES.get(key) or custom.get(key)
         hold = spec.max_hold_bars if spec else bt.max_hold_bars
-        p = sig.payload
         tr = simulate_trade(f, t, sig.direction, p["stop"], p["targets"][0], p["targets"][1],
                             BacktestConfig(max_hold_bars=hold, partial_at_t1=bt.partial_at_t1, costs=bt.costs), max_chase_atr, sig.symbol, sig.strategy_key)
         if tr is not None:

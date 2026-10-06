@@ -123,6 +123,69 @@ def track_record(db: Session = Depends(get_db)):
             "note": "Live forward-tracked outcomes of published setups, resolved with the same rules as the backtest."}
 
 
+def _result(oc: SignalOutcome) -> str:
+    """open | target2 | target1 | stop | time | not_filled — what happened to a published idea."""
+    if oc.status == "open":
+        return "open"
+    if oc.status == "skipped":
+        return "not_filled"
+    if oc.t2_hit:
+        return "target2"
+    if oc.t1_hit:
+        return "target1"
+    return "stop" if oc.stop_hit else "time"
+
+
+def _idea_row(sig: Signal, oc: SignalOutcome) -> dict:
+    p, opt = sig.payload or {}, sig.market == "NFO"
+    u = p.get("underlying") or {}
+    pr = p.get("probability") or {}
+    row = {"id": sig.id, "market": sig.market, "as_of": str(sig.as_of), "label": sig.symbol, "direction": sig.direction,
+           "strategy": ((u if opt else p).get("strategy") or {}).get("name", sig.strategy_key),
+           "currency": "INR" if opt else p.get("currency"), "entry_zone": [p.get("entry")] * 2 if opt else p.get("entry_zone"),
+           "stop": p.get("stop"), "targets": p.get("targets"), "chance_t1": pr.get("t1_hit_rate"), "sample_size": pr.get("sample_size") or 0,
+           "result": _result(oc), "exit_reason": oc.exit_reason, "net_return_pct": oc.net_return_pct,
+           "resolved_at": oc.resolved_at.isoformat() if oc.resolved_at else None}
+    if opt:  # judged on the NIFTY levels that triggered it; its return is the index move, not the option premium
+        row["judged_on"] = {"symbol": u.get("symbol"), "entry_zone": u.get("entry_zone"), "stop": u.get("stop"), "targets": u.get("targets")}
+    return row
+
+
+@router.get("/history")
+def history(market: Optional[str] = Query(None, pattern="^(NSE|CRYPTO|NFO)$"), limit: int = Query(300, ge=1, le=1000),
+            db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Every published idea (VALID setup) and what happened next: target hit, stop hit, time exit, not filled or still open.
+    Forward-tracked with the same rules as the backtest. Ideas from SAMPLE data are left out once a market uses real data."""
+    from app.services.scan_service import provider_is_sample
+
+    perms = permissions_of(user)
+    if "signals:read" not in perms:
+        raise HTTPException(403, "Not allowed")
+    markets = [m for m in ([market] if market else ["NFO", "NSE", "CRYPTO"]) if m != "NFO" or "options:signals" in perms]
+    rows = db.execute(select(Signal, SignalOutcome).join(SignalOutcome, SignalOutcome.signal_id == Signal.id)
+                      .where(Signal.market.in_(markets)).order_by(Signal.as_of.desc(), Signal.score.desc()).limit(limit)).all()
+    sample = {m: provider_is_sample("NFO" if m == "NFO" else m) for m in markets}
+    items = [_idea_row(sig, oc) for sig, oc in rows if bool(sig.is_sample_data) == sample[sig.market]]
+    done = [i for i in items if i["result"] in ("target1", "target2", "stop", "time")]
+    rets = [i["net_return_pct"] for i in done if i["net_return_pct"] is not None]
+    chances = [i["chance_t1"] for i in done if i["chance_t1"] is not None]
+
+    def pct(n: int) -> Optional[float]:
+        return round(100 * n / len(done), 1) if done else None
+
+    summary = {"ideas": len(items), "open": sum(i["result"] == "open" for i in items), "not_filled": sum(i["result"] == "not_filled" for i in items),
+               "closed": len(done), "target1_or_better": sum(i["result"] in ("target1", "target2") for i in done),
+               "target2": sum(i["result"] == "target2" for i in done), "stop": sum(i["result"] == "stop" for i in done),
+               "time": sum(i["result"] == "time" for i in done),
+               "target1_rate": pct(sum(i["result"] in ("target1", "target2") for i in done)), "stop_rate": pct(sum(i["result"] == "stop" for i in done)),
+               "expected_target1_rate": round(sum(chances) / len(chances), 1) if chances else None,
+               "avg_net_return_pct": round(sum(rets) / len(rets), 2) if rets else None}
+    return {"items": items, "summary": summary,
+            "note": ("Each published idea is followed from the next session's open with the backtest's rules: stop assumed first when a bar "
+                     "touches both, breakeven after Target 1, closed at the strategy's maximum holding period. NIFTY option ideas are judged "
+                     "on the NIFTY levels that triggered them; their return is the index move, not the option premium.")}
+
+
 @router.get("/{signal_id}")
 def get_signal(signal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     sig = db.get(Signal, signal_id)

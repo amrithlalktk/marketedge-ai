@@ -21,6 +21,7 @@ const PRIMARY = [
   { href: "/watchlists", label: "Watchlists", icon: "☆" },
 ];
 const SECONDARY = [
+  { href: "/track-record", label: "Track record" },
   { href: "/portfolio", label: "Portfolio" },
   { href: "/alerts", label: "Alerts" },
   { href: "/options", label: "Options" },

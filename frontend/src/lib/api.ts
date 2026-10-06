@@ -11,6 +11,7 @@ import type {
   AlertIn,
   AlertItem,
   AlertKind,
+  IdeaHistory,
   JournalIn,
   NotificationItem,
   NotificationSettings,
@@ -242,6 +243,7 @@ export const api = {
     list: (q: { status?: "VALID" | "NO_TRADE"; sort?: SortKey; direction?: string; strategy?: string; min_score?: number; market?: string } = {}) =>
       request<SignalList>("/signals", { query: q }),
     get: (id: number | string) => request<SetupDetail>(`/signals/${id}`),
+    history: (market?: "NSE" | "CRYPTO" | "NFO") => request<IdeaHistory>("/signals/history", { query: { market } }),
   },
   stocks: {
     list: (q: { q?: string; sector?: string; page?: number; page_size?: number; include_indices?: boolean; market?: string } = {}) =>

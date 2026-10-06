@@ -1099,3 +1099,35 @@ export interface TelegramLink {
   instructions: string;
   configured: boolean;
 }
+
+export type IdeaResult = "open" | "target1" | "target2" | "stop" | "time" | "not_filled";
+
+/** One published idea and what happened next (GET /signals/history). */
+export interface PastIdea {
+  id: number;
+  market: "NSE" | "CRYPTO" | "NFO";
+  as_of: string;
+  label: string;
+  direction: Direction;
+  strategy: string;
+  currency: string | null;
+  entry_zone: [number, number] | null;
+  stop: number | null;
+  targets: [number, number] | null;
+  chance_t1: number | null;
+  sample_size: number;
+  result: IdeaResult;
+  exit_reason: string | null;
+  net_return_pct: number | null;
+  resolved_at: string | null;
+  judged_on?: { symbol: string; entry_zone: [number, number]; stop: number; targets: [number, number] };
+}
+
+export interface IdeaHistory {
+  items: PastIdea[];
+  summary: {
+    ideas: number; open: number; not_filled: number; closed: number; target1_or_better: number; target2: number; stop: number; time: number;
+    target1_rate: number | null; stop_rate: number | null; expected_target1_rate: number | null; avg_net_return_pct: number | null;
+  };
+  note: string;
+}
