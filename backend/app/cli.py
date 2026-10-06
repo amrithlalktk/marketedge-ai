@@ -67,6 +67,28 @@ def options_report(db: Session) -> dict:
                                "failed": failed(x.get("checks"))} for x in o.get("option_setups") or []]}
 
 
+def stocks_report(db: Session, market: str = "NSE") -> dict:
+    """Read-only: what the latest scan found and which checks rejected the candidates (most common first)."""
+    from collections import Counter
+
+    from app.models import Signal
+    from app.services.scan_service import latest_run
+
+    run = latest_run(db, market)
+    if run is None:
+        return {"scan": "none yet"}
+    sigs = list(db.scalars(select(Signal).where(Signal.scan_run_id == run.id)))
+    failed = Counter(c["name"] for sg in sigs if sg.status == "NO_TRADE" for c in (sg.payload or {}).get("checks", [])
+                     if not c["passed"] and c["severity"] == "block")
+    return {"as_of": run.as_of, "candidates": len(sigs), "valid": sum(sg.status == "VALID" for sg in sigs),
+            "regime": ((run.stats or {}).get("regime") or {}), "market_message": (run.stats or {}).get("market_message"),
+            "rejected_by": dict(failed.most_common(10)),
+            "closest": [{"symbol": sg.symbol, "strategy": sg.strategy_key, "direction": sg.direction, "score": round(sg.score, 1),
+                         "failed": [c["name"] + ": " + c.get("detail", "") for c in (sg.payload or {}).get("checks", [])
+                                    if not c["passed"] and c["severity"] == "block"]}
+                        for sg in sorted(sigs, key=lambda x: -x.score)[:5]]}
+
+
 def storage_report(db: Session) -> dict:
     """Read-only: database size, the largest tables and the date range of the main history tables (Postgres only)."""
     from sqlalchemy import text
@@ -138,7 +160,7 @@ def main() -> None:
         elif args.cmd == "options":
             print(json.dumps(jobs.options(db), indent=2, default=str))
         elif args.cmd == "report":
-            print(json.dumps({"options": options_report(db), "storage": storage_report(db)}, indent=2, default=str))
+            print(json.dumps({"options": options_report(db), "stocks": stocks_report(db), "storage": storage_report(db)}, indent=2, default=str))
         elif args.cmd == "bootstrap-sample":
             if s.market_data_provider != "sample":
                 raise SystemExit("bootstrap-sample requires MARKET_DATA_PROVIDER=sample")
