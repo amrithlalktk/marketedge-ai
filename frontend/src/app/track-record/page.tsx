@@ -6,8 +6,9 @@ import { DirectionBadge, Disclaimer, EmptyState, ErrorState, PageHeader, Pill, S
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { DASH, price, signedPct } from "@/lib/format";
+import { quoteKey, useLiveQuotes } from "@/lib/live";
 import { marketOn } from "@/lib/market";
-import type { IdeaResult, PastIdea } from "@/lib/types";
+import type { IdeaResult, LiveQuotes, PastIdea } from "@/lib/types";
 import { useApi } from "@/lib/useApi";
 
 type MarketFilter = "ALL" | "NFO" | "NSE" | "CRYPTO";
@@ -48,29 +49,38 @@ function Levels({ i }: { i: PastIdea }) {
 }
 
 /** "833.12 → 850.00 ▲ +2.03% since the idea (in your favour)": what the price did after the idea was published. */
-function Move({ i }: { i: PastIdea }) {
+type Quote = { price: number; live: boolean } | undefined;
+
+/** "₹833.12 → ₹851.20 ▲ increased +2.17% since the idea · LIVE · in your favour". Uses the live price when there is one,
+ *  otherwise the latest close. */
+function Move({ i, quote }: { i: PastIdea; quote: Quote }) {
   const m = i.move;
-  if (m.change_pct == null || m.price_then == null || m.price_now == null) return null;
-  const up = m.change_pct > 0;
-  const flat = m.change_pct === 0;
+  const now = quote?.price ?? m.price_now;
+  if (m.price_then == null || now == null) return null;
+  const change = Math.round(10000 * (now / m.price_then - 1)) / 100;
+  const up = change > 0;
+  const flat = change === 0;
   const favour = flat ? null : (i.direction === "LONG") === up;
   const p = (v: number) => (i.market === "NFO" ? v.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : price(v, i.currency));
   return (
     <p className="num mt-1 text-sm">
       <span className="text-muted">{i.market === "NFO" ? "NIFTY" : "Price"} </span>
-      {p(m.price_then)} → {p(m.price_now)}{" "}
+      {p(m.price_then)} → {p(now)}{" "}
       <span className={cx("font-semibold", flat ? "text-muted" : up ? "text-up" : "text-down")}>
-        {flat ? "unchanged" : `${up ? "▲ increased" : "▼ decreased"} ${signedPct(m.change_pct)}`}
+        {flat ? "unchanged" : `${up ? "▲ increased" : "▼ decreased"} ${signedPct(change)}`}
       </span>
       <span className="text-xs text-muted">
-        {" "}since the idea{m.as_of && ` (close of ${m.as_of})`}
+        {" "}since the idea{" "}
+        {quote ? (
+          quote.live ? <Pill tone="blue">LIVE</Pill> : <span>(last traded price)</span>
+        ) : m.as_of && <span>(close of {m.as_of})</span>}
         {favour != null && <> · <span className={favour ? "text-up" : "text-down"}>{favour ? "in your favour" : "against you"}</span></>}
       </span>
     </p>
   );
 }
 
-function IdeaRow({ i }: { i: PastIdea }) {
+function IdeaRow({ i, quote }: { i: PastIdea; quote: Quote }) {
   const r = RESULT[i.result];
   const detail = resultDetail(i);
   const href = i.market === "NFO" ? "/options?tab=setups" : `/setups/${i.id}`;
@@ -91,13 +101,25 @@ function IdeaRow({ i }: { i: PastIdea }) {
           <Pill tone={r.tone}>{r.label}</Pill>
         </span>
       </div>
-      <Move i={i} />
+      <Move i={i} quote={quote} />
       <Levels i={i} />
       <p className="mt-1 text-[11px] text-muted">
         Expected chance of Target 1: {i.chance_t1 != null && i.sample_size ? `${Math.round(i.chance_t1)}% (${i.sample_size} past cases)` : DASH}
         {detail && <> · {detail}</>}
       </p>
     </li>
+  );
+}
+
+function LiveNote({ live }: { live: LiveQuotes | null }) {
+  if (!live) return null;
+  const errors = Object.values(live.errors);
+  return (
+    <p className="-mt-2 mb-4 text-[11px] text-muted">
+      Prices marked LIVE refresh every 30 seconds (NSE {live.nse_open ? "is open" : "is closed: showing the last traded price"}; crypto trades 24/7).
+      Live prices are for watching only; ideas and results still use the daily close.
+      {errors.map((e) => <span key={e} className="ml-1 text-amber-300">{e}.</span>)}
+    </p>
   );
 }
 
@@ -113,6 +135,7 @@ export default function TrackRecordPage() {
     ...(marketOn("NSE") ? [{ value: "NSE" as const, label: "NSE stocks" }] : []),
     ...(marketOn("CRYPTO") ? [{ value: "CRYPTO" as const, label: "Crypto" }] : []),
   ];
+  const live = useLiveQuotes((q.data?.items ?? []).map((i) => quoteKey(i.market, i.move.of)));
   const items = (q.data?.items ?? []).filter((i) => show === "all" || (show === "open" ? i.result === "open" : i.result !== "open"));
   const byDate = items.reduce<Record<string, PastIdea[]>>((acc, i) => ((acc[i.as_of] ??= []).push(i), acc), {});
   const s = q.data?.summary;
@@ -154,6 +177,7 @@ export default function TrackRecordPage() {
             {s.closed < 30 && s.closed > 0 && <strong className="text-amber-300">Only {s.closed} finished ideas so far: too few to judge the strategy; the rates will swing a lot. </strong>}
             {q.data.note}
           </p>
+          <LiveNote live={live} />
 
           {items.length === 0 ? (
             <EmptyState title={s.ideas === 0 ? "No ideas published yet" : "Nothing matches this filter"}>
@@ -164,7 +188,7 @@ export default function TrackRecordPage() {
               {Object.entries(byDate).map(([d, list]) => (
                 <section key={d} aria-label={`Ideas from ${d}`}>
                   <h2 className="mb-1.5 text-sm font-semibold">From the {d} close <span className="font-normal text-muted">· {list.length} idea{list.length > 1 ? "s" : ""}</span></h2>
-                  <ul className="space-y-2">{list.map((i) => <IdeaRow key={i.id} i={i} />)}</ul>
+                  <ul className="space-y-2">{list.map((i) => <IdeaRow key={i.id} i={i} quote={live?.quotes[quoteKey(i.market, i.move.of)]} />)}</ul>
                 </section>
               ))}
             </div>

@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth";
 import { marketOn } from "@/lib/market";
 import { DASH, inr, price, rr } from "@/lib/format";
 import type { OptionSetup, ProbabilitySummary, SetupSummary } from "@/lib/types";
+import { quoteKey, useLiveQuotes } from "@/lib/live";
 import { useApi } from "@/lib/useApi";
 import { Card, DataStamp, DirectionBadge, Pill, Skeleton, cx } from "./ui";
 
@@ -36,7 +37,22 @@ function Levels({ entry, stop, t1, t2 }: { entry: string; stop: string; t1: stri
   );
 }
 
-function OptionIdea({ o }: { o: OptionSetup }) {
+type Quote = { price: number; live: boolean } | undefined;
+
+/** "Now ₹851.20 ▲ +2.17% since the idea · LIVE" (display only). */
+function LiveNow({ quote, then, label, fmt }: { quote: Quote; then?: number; label: string; fmt: (v: number) => string }) {
+  if (!quote || !then) return null;
+  const ch = Math.round(10000 * (quote.price / then - 1)) / 100;
+  return (
+    <p className="num mt-1 text-sm">
+      <span className="text-muted">{label} now </span>{fmt(quote.price)}{" "}
+      <span className={cx("font-semibold", ch > 0 ? "text-up" : ch < 0 ? "text-down" : "text-muted")}>{ch > 0 ? "▲" : ch < 0 ? "▼" : ""} {ch > 0 ? "+" : ""}{ch.toFixed(2)}%</span>
+      <span className="text-xs text-muted"> since the idea {quote.live ? <Pill tone="blue">LIVE</Pill> : "(last traded)"}</span>
+    </p>
+  );
+}
+
+function OptionIdea({ o, quote }: { o: OptionSetup; quote: Quote }) {
   const c = o.contract!;
   return (
     <li className="rounded-md border border-edge bg-panel2/40 p-3">
@@ -47,6 +63,7 @@ function OptionIdea({ o }: { o: OptionSetup }) {
         <DirectionBadge d={o.direction} />
       </div>
       <Levels entry={`₹${o.entry}`} stop={`₹${o.stop}`} t1={`₹${o.targets?.[0]}`} t2={`₹${o.targets?.[1]}`} />
+      <LiveNow quote={quote} then={o.underlying?.price} label="NIFTY" fmt={(v) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 })} />
       <div className="mt-2"><Chance p={o.probability} /></div>
       <p className="mt-1 text-xs text-muted">
         Premium per lot {inr(o.premium_per_lot, 0)} · max loss at stop ≈ {inr(o.risk_per_lot, 0)} per lot · reward:risk {rr(o.rr)}
@@ -58,7 +75,7 @@ function OptionIdea({ o }: { o: OptionSetup }) {
   );
 }
 
-function StockIdea({ s }: { s: SetupSummary }) {
+function StockIdea({ s, quote }: { s: SetupSummary; quote: Quote }) {
   const p = (v: number) => price(v, s.currency);
   return (
     <li className="rounded-md border border-edge bg-panel2/40 p-3">
@@ -71,6 +88,7 @@ function StockIdea({ s }: { s: SetupSummary }) {
       </div>
       <Levels entry={s.entry_zone[0] === s.entry_zone[1] ? p(s.entry_zone[0]) : `${p(s.entry_zone[0])}–${p(s.entry_zone[1])}`}
         stop={p(s.stop)} t1={p(s.targets[0])} t2={p(s.targets[1])} />
+      <LiveNow quote={quote} then={s.current_price} label="Price" fmt={p} />
       <div className="mt-2"><Chance p={s.probability} /></div>
       <p className="mt-1 text-xs text-muted">reward:risk {rr(s.rr_t2)} · risk {s.risk_pct.toFixed(1)}% to stop{s.risk_factors[0] ? ` · ⚠ ${s.risk_factors[0]}` : ""}</p>
       <Link className="link mt-1 inline-block text-xs" href={s.id ? `/setups/${s.id}` : `/stocks/${encodeURIComponent(s.symbol)}`}>Details →</Link>
@@ -91,6 +109,10 @@ export function TradeIdeas() {
 
   const optionIdeas = (opts.data?.items ?? []).filter((o) => o.status === "VALID" && o.contract);
   const stockIdeas = [...(nse.data?.items ?? []), ...(cry.data?.items ?? [])].filter((s) => s.status === "VALID");
+  const live = useLiveQuotes([
+    ...optionIdeas.flatMap((o) => (o.underlying ? [quoteKey("NFO", o.underlying.symbol)] : [])),
+    ...stockIdeas.map((s) => quoteKey(s.market, s.symbol)),
+  ]);
   const loading = (optOn && opts.loading) || nse.loading || cry.loading;
   const none = !loading && optionIdeas.length === 0 && stockIdeas.length === 0;
   // never scanned (404 "no scan yet") is not the same answer as "scanned, nothing passed"
@@ -122,8 +144,8 @@ export function TradeIdeas() {
         </div>
       ) : (
         <ul className="space-y-2">
-          {optionIdeas.map((o, i) => <OptionIdea key={`o${i}`} o={o} />)}
-          {stockIdeas.map((s) => <StockIdea key={`${s.market}${s.id}`} s={s} />)}
+          {optionIdeas.map((o, i) => <OptionIdea key={`o${i}`} o={o} quote={o.underlying ? live?.quotes[quoteKey("NFO", o.underlying.symbol)] : undefined} />)}
+          {stockIdeas.map((s) => <StockIdea key={`${s.market}${s.id}`} s={s} quote={live?.quotes[quoteKey(s.market, s.symbol)]} />)}
         </ul>
       )}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">

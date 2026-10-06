@@ -205,6 +205,15 @@ def history(market: Optional[str] = Query(None, pattern="^(NSE|CRYPTO|NFO)$"), l
                      "on the NIFTY levels that triggered them; their return is the index move, not the option premium.")}
 
 
+@router.get("/live-quotes", dependencies=[Depends(require("signals:read"))])
+def live_quotes(items: str = Query(..., max_length=4000, description="Comma-separated MARKET:SYMBOL, e.g. NSE:GRAPHITE,CRYPTO:BTCUSDT"),
+                db: Session = Depends(get_db)):
+    """Current prices for display next to ideas (NSE from Upstox, crypto from Binance; 20 s cache). Not used by the analysis."""
+    from app.services.live_quotes import live_quotes as fetch
+
+    return fetch(db, [i.strip() for i in items.split(",") if i.strip()])
+
+
 @router.get("/{signal_id}")
 def get_signal(signal_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     sig = db.get(Signal, signal_id)

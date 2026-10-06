@@ -1133,3 +1133,10 @@ export interface IdeaHistory {
   };
   note: string;
 }
+
+export interface LiveQuotes {
+  quotes: Record<string, { price: number; live: boolean }>;
+  errors: Record<string, string>;
+  fetched_at: string;
+  nse_open: boolean;
+}

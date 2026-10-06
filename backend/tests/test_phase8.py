@@ -434,3 +434,30 @@ def test_vercel_production_defaults(monkeypatch):
     assert s.github_repo == "someone/marketedge-ai" and s.allow_registration is False and s.job_runner == "github" and s.cookie_secure
     monkeypatch.setenv("VERCEL_ENV", "preview")
     assert config._vercel_defaults() == {}
+
+
+def test_live_quotes(app_client, admin_headers, scanned, monkeypatch):
+    """Display-only live prices: none for SAMPLE markets, cached, and a quote outage is reported, not raised."""
+    from app.core.cache import get_cache
+    from app.services import live_quotes, scan_service
+
+    r = app_client.get("/api/v1/signals/live-quotes?items=NSE:DEMO_NIFTY50", headers=admin_headers).json()
+    assert r["quotes"] == {} and r["errors"] == {}  # sample data: nothing live to show
+
+    monkeypatch.setattr(scan_service, "provider_is_sample", lambda market: False)
+    monkeypatch.setattr(live_quotes, "_nse", lambda db, syms: {s: 101.5 for s in syms})
+    monkeypatch.setattr(live_quotes, "_crypto", lambda syms: (_ for _ in ()).throw(RuntimeError("binance down")))
+    get_cache().invalidate_prefix("live:")
+    r = app_client.get("/api/v1/signals/live-quotes?items=NSE:GRAPHITE,CRYPTO:BTCUSDT", headers=admin_headers).json()
+    assert r["quotes"]["NSE:GRAPHITE"]["price"] == 101.5 and "CRYPTO" in r["errors"] and "CRYPTO:BTCUSDT" not in r["quotes"]
+    assert app_client.get("/api/v1/signals/live-quotes?items=NSE:GRAPHITE", headers={}).status_code == 401
+
+
+def test_nse_session_hours():
+    from datetime import datetime
+
+    from app.providers.upstox import IST
+    from app.services.live_quotes import nse_open
+
+    assert nse_open(datetime(2026, 10, 6, 10, 0, tzinfo=IST)) and not nse_open(datetime(2026, 10, 6, 16, 0, tzinfo=IST))
+    assert not nse_open(datetime(2026, 10, 4, 10, 0, tzinfo=IST))  # Sunday

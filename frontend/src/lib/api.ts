@@ -13,6 +13,7 @@ import type {
   AlertKind,
   IdeaHistory,
   JournalIn,
+  LiveQuotes,
   NotificationItem,
   NotificationSettings,
   OrderIn,
@@ -244,6 +245,7 @@ export const api = {
       request<SignalList>("/signals", { query: q }),
     get: (id: number | string) => request<SetupDetail>(`/signals/${id}`),
     history: (market?: "NSE" | "CRYPTO" | "NFO") => request<IdeaHistory>("/signals/history", { query: { market } }),
+    liveQuotes: (items: string[]) => request<LiveQuotes>("/signals/live-quotes", { query: { items: items.join(",") } }),
   },
   stocks: {
     list: (q: { q?: string; sector?: string; page?: number; page_size?: number; include_indices?: boolean; market?: string } = {}) =>
