@@ -1121,6 +1121,8 @@ export interface PastIdea {
   net_return_pct: number | null;
   resolved_at: string | null;
   judged_on?: { symbol: string; entry_zone: [number, number]; stop: number; targets: [number, number] };
+  /** Price when the idea was published vs the latest close (NIFTY for an option idea). */
+  move: { of: string; price_then: number | null; price_now: number | null; as_of: string | null; change_pct: number | null };
 }
 
 export interface IdeaHistory {

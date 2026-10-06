@@ -47,6 +47,29 @@ function Levels({ i }: { i: PastIdea }) {
   );
 }
 
+/** "833.12 → 850.00 ▲ +2.03% since the idea (in your favour)": what the price did after the idea was published. */
+function Move({ i }: { i: PastIdea }) {
+  const m = i.move;
+  if (m.change_pct == null || m.price_then == null || m.price_now == null) return null;
+  const up = m.change_pct > 0;
+  const flat = m.change_pct === 0;
+  const favour = flat ? null : (i.direction === "LONG") === up;
+  const p = (v: number) => (i.market === "NFO" ? v.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : price(v, i.currency));
+  return (
+    <p className="num mt-1 text-sm">
+      <span className="text-muted">{i.market === "NFO" ? "NIFTY" : "Price"} </span>
+      {p(m.price_then)} → {p(m.price_now)}{" "}
+      <span className={cx("font-semibold", flat ? "text-muted" : up ? "text-up" : "text-down")}>
+        {flat ? "unchanged" : `${up ? "▲ increased" : "▼ decreased"} ${signedPct(m.change_pct)}`}
+      </span>
+      <span className="text-xs text-muted">
+        {" "}since the idea{m.as_of && ` (close of ${m.as_of})`}
+        {favour != null && <> · <span className={favour ? "text-up" : "text-down"}>{favour ? "in your favour" : "against you"}</span></>}
+      </span>
+    </p>
+  );
+}
+
 function IdeaRow({ i }: { i: PastIdea }) {
   const r = RESULT[i.result];
   const detail = resultDetail(i);
@@ -68,6 +91,7 @@ function IdeaRow({ i }: { i: PastIdea }) {
           <Pill tone={r.tone}>{r.label}</Pill>
         </span>
       </div>
+      <Move i={i} />
       <Levels i={i} />
       <p className="mt-1 text-[11px] text-muted">
         Expected chance of Target 1: {i.chance_t1 != null && i.sample_size ? `${Math.round(i.chance_t1)}% (${i.sample_size} past cases)` : DASH}

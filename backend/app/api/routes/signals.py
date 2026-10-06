@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, permissions_of, require
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.models import Signal, SignalOutcome, User
+from app.models import MarketBar, Signal, SignalOutcome, User
 from app.services.scan_service import latest_run
 from engine.analyzer import DISCLAIMER
 
@@ -136,16 +136,33 @@ def _result(oc: SignalOutcome) -> str:
     return "stop" if oc.stop_hit else "time"
 
 
-def _idea_row(sig: Signal, oc: SignalOutcome) -> dict:
+def _latest_closes(db: Session, instrument_ids: set) -> dict:
+    """{instrument_id: (close, date)} of each instrument's most recent daily bar."""
+    if not instrument_ids:
+        return {}
+    last = (select(MarketBar.instrument_id, func.max(MarketBar.ts).label("ts"))
+            .where(MarketBar.interval == "1d", MarketBar.instrument_id.in_(instrument_ids)).group_by(MarketBar.instrument_id).subquery())
+    rows = db.execute(select(MarketBar.instrument_id, MarketBar.close, MarketBar.ts).where(MarketBar.interval == "1d")
+                      .join(last, and_(MarketBar.instrument_id == last.c.instrument_id, MarketBar.ts == last.c.ts)))
+    return {iid: (float(close), ts.date()) for iid, close, ts in rows}
+
+
+def _idea_row(sig: Signal, oc: SignalOutcome, latest: dict) -> dict:
     p, opt = sig.payload or {}, sig.market == "NFO"
     u = p.get("underlying") or {}
     pr = p.get("probability") or {}
+    # price move since the idea: the stock / coin itself, or NIFTY for an option idea (option premiums are not stored daily)
+    then = u.get("price") if opt else p.get("current_price")
+    now, now_date = latest.get(sig.instrument_id, (None, None))
     row = {"id": sig.id, "market": sig.market, "as_of": str(sig.as_of), "label": sig.symbol, "direction": sig.direction,
            "strategy": ((u if opt else p).get("strategy") or {}).get("name", sig.strategy_key),
            "currency": "INR" if opt else p.get("currency"), "entry_zone": [p.get("entry")] * 2 if opt else p.get("entry_zone"),
            "stop": p.get("stop"), "targets": p.get("targets"), "chance_t1": pr.get("t1_hit_rate"), "sample_size": pr.get("sample_size") or 0,
            "result": _result(oc), "exit_reason": oc.exit_reason, "net_return_pct": oc.net_return_pct,
-           "resolved_at": oc.resolved_at.isoformat() if oc.resolved_at else None}
+           "resolved_at": oc.resolved_at.isoformat() if oc.resolved_at else None,
+           "move": {"of": u.get("symbol") if opt else sig.symbol, "price_then": then, "price_now": now,
+                    "as_of": str(now_date) if now_date else None,
+                    "change_pct": round(100 * (now / then - 1), 2) if then and now is not None else None}}
     if opt:  # judged on the NIFTY levels that triggered it; its return is the index move, not the option premium
         row["judged_on"] = {"symbol": u.get("symbol"), "entry_zone": u.get("entry_zone"), "stop": u.get("stop"), "targets": u.get("targets")}
     return row
@@ -165,7 +182,9 @@ def history(market: Optional[str] = Query(None, pattern="^(NSE|CRYPTO|NFO)$"), l
     rows = db.execute(select(Signal, SignalOutcome).join(SignalOutcome, SignalOutcome.signal_id == Signal.id)
                       .where(Signal.market.in_(markets)).order_by(Signal.as_of.desc(), Signal.score.desc()).limit(limit)).all()
     sample = {m: provider_is_sample("NFO" if m == "NFO" else m) for m in markets}
-    items = [_idea_row(sig, oc) for sig, oc in rows if bool(sig.is_sample_data) == sample[sig.market]]
+    rows = [(sig, oc) for sig, oc in rows if bool(sig.is_sample_data) == sample[sig.market]]
+    latest = _latest_closes(db, {sig.instrument_id for sig, _ in rows})
+    items = [_idea_row(sig, oc, latest) for sig, oc in rows]
     done = [i for i in items if i["result"] in ("target1", "target2", "stop", "time")]
     rets = [i["net_return_pct"] for i in done if i["net_return_pct"] is not None]
     chances = [i["chance_t1"] for i in done if i["chance_t1"] is not None]

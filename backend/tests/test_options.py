@@ -304,7 +304,7 @@ def test_option_ideas_are_tracked_and_shown_in_history(app_client, admin_headers
         run = db.scalar(select(ScanRun).where(ScanRun.market == "NFO").order_by(ScanRun.id.desc()))
         payload = {"contract": {"label": "NIFTY 50 TEST CE"}, "entry": 120.0, "stop": 80.0, "targets": [150.0, 190.0],
                    "probability": {"t1_hit_rate": 52.0, "sample_size": 40},
-                   "underlying": {"symbol": "DEMO_NIFTY50", "strategy": {"id": "breakout_volume", "name": "Breakout"},
+                   "underlying": {"symbol": "DEMO_NIFTY50", "price": c, "strategy": {"id": "breakout_volume", "name": "Breakout"},
                                   "entry_zone": [c, c], "stop": c - 5, "targets": [c + 2, c + 4]}}
         for _ in range(2):  # a rescan of the same session republishes the idea
             db.add(Signal(scan_run_id=run.id, instrument_id=und.id, symbol="NIFTY 50 TEST CE", market="NFO", strategy_key="opt:breakout_volume",
@@ -323,6 +323,7 @@ def test_option_ideas_are_tracked_and_shown_in_history(app_client, admin_headers
     h = app_client.get(f"{API}/signals/history?market=NFO", headers=admin_headers).json()
     row = next(i for i in h["items"] if i["label"] == "NIFTY 50 TEST CE")
     assert row["result"] == "target2" and row["judged_on"]["symbol"] == "DEMO_NIFTY50" and row["entry_zone"] == [120.0, 120.0]
+    assert row["move"]["of"] == "DEMO_NIFTY50" and row["move"]["price_now"] is not None
     assert h["summary"]["closed"] >= 1 and h["summary"]["target1_or_better"] >= 1
     std = make_user(app_client, "histstd@example.com")
     assert all(i["market"] != "NFO" for i in app_client.get(f"{API}/signals/history", headers=std).json()["items"])
@@ -333,4 +334,6 @@ def test_history_lists_stock_ideas(app_client, admin_headers, scanned):
     assert set(h["summary"]) >= {"ideas", "open", "closed", "target1_rate", "stop_rate", "expected_target1_rate"}
     for i in h["items"]:
         assert i["market"] == "NSE" and i["result"] in ("open", "target1", "target2", "stop", "time", "not_filled")
+        m = i["move"]
+        assert m["of"] == i["label"] and m["price_now"] is not None and m["change_pct"] == round(100 * (m["price_now"] / m["price_then"] - 1), 2)
     assert app_client.get(f"{API}/signals/history?market=XX", headers=admin_headers).status_code == 422
