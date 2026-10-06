@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, alerts, auth, markets, notifications, options, portfolios, risk, signals, stocks, upstox, watchlists
+from app.api.routes import admin, alerts, auth, cron, markets, notifications, options, portfolios, risk, signals, stocks, upstox, watchlists
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
@@ -98,7 +98,7 @@ def create_app() -> FastAPI:
                        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
                        expose_headers=["X-Request-ID"])
     app.add_middleware(RequestContextMiddleware)  # outermost: request id + access log + HTTP metrics
-    for r in (auth, markets, stocks, signals, watchlists, risk, options, portfolios, alerts, notifications, admin, upstox):
+    for r in (auth, markets, stocks, signals, watchlists, risk, options, portfolios, alerts, notifications, admin, upstox, cron):
         app.include_router(r.router, prefix=s.api_prefix)
     app.include_router(signals.market_router, prefix=s.api_prefix)
 

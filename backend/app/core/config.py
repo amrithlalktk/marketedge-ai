@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     github_repo: Optional[str] = None            # owner/name
     github_dispatch_token: Optional[str] = None  # fine-grained token with Actions: write on that repo
     github_ref: str = "main"
+    cron_secret: Optional[str] = None  # Vercel Cron sends "Authorization: Bearer <CRON_SECRET>" to /api/v1/cron/daily
 
     secret_key: str = "change-me-in-production-please-32+chars"
     encryption_key: Optional[str] = None  # Fernet key for TOTP secrets and provider API keys

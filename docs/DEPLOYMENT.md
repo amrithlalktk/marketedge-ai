@@ -78,7 +78,8 @@ BENCHMARK_CRYPTO=BTCUSDT
 ALLOW_REGISTRATION=false
 JOB_RUNNER=github
 GITHUB_REPO=<owner>/<repo>
-GITHUB_DISPATCH_TOKEN=<optional fine-grained token, see below>
+GITHUB_DISPATCH_TOKEN=<fine-grained token, see below>
+CRON_SECRET=<random string, see below>
 CORS_ORIGINS=https://<your-app>.vercel.app
 PUBLIC_APP_URL=https://<your-app>.vercel.app
 UPSTOX_REDIRECT_URI=https://<your-app>.vercel.app/api/v1/upstox/callback
@@ -94,7 +95,14 @@ If you already deployed the website as its own project with Root Directory `fron
 2. Limit it to **only this repository**.
 3. Give it the permission **Actions: Read and write**.
 
-It's optional. Without it, the schedule still runs; only the button can't start it.
+The same token lets **Vercel Cron** start the daily runs on time (see `crons` in `vercel.json`: NSE 18:30 IST weekdays,
+crypto 06:00 IST). GitHub's own schedule is only a backup: it often starts hours late, and it skips a market that
+already ran. Vercel's free plan fires a cron somewhere within the scheduled hour.
+
+**`CRON_SECRET`** protects the cron endpoint so nobody else can start runs. Make one with
+`python3 -c "import secrets; print(secrets.token_urlsafe(32))"` and add it in Vercel only (not GitHub).
+
+Without these two, the GitHub schedule still runs the jobs, just possibly hours late.
 
 ## Step 3: First run (creates the tables, your admin account and the data)
 1. GitHub → **Actions** → **daily** → **Run workflow**, with market **CRYPTO** and full **true**. Binance data needs no key, and this first run also creates the database tables and your admin account. It takes about 5 minutes.

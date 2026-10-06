@@ -96,6 +96,8 @@ def main() -> None:
     d = sub.add_parser("daily")
     d.add_argument("market", choices=["NSE", "CRYPTO"])
     d.add_argument("--full", action="store_true")
+    d.add_argument("--if-not-done", action="store_true", help="skip when this market already completed a scan in the last 12 hours "
+                   "(the late GitHub schedule after the on-time Vercel Cron run)")
     a = sub.add_parser("create-admin")
     a.add_argument("email")
     a.add_argument("password")
@@ -118,7 +120,9 @@ def main() -> None:
         s = get_settings()
         if s.bootstrap_admin_email and s.bootstrap_admin_password:
             ensure_daily_ideas_alert(db, ensure_admin(db, s.bootstrap_admin_email, s.bootstrap_admin_password))
-        if args.cmd == "daily":
+        if args.cmd == "daily" and args.if_not_done and jobs.recently_done(db, args.market):
+            print(json.dumps({"skipped": f"{args.market} already ran in the last 12 hours"}))
+        elif args.cmd == "daily":
             out = jobs.daily(db, args.market, full=args.full)
             print(json.dumps(out, indent=2, default=str))
             failed = [k for k, v in out.items() if v == "failed"]

@@ -2,6 +2,8 @@ name: daily
 # The end-of-day pipeline (the app has no always-on workers on Vercel):
 #   NSE    18:30 IST Mon–Fri → prices → scan → NIFTY options → "daily trade ideas" message
 #   CRYPTO 06:00 IST daily   → prices → scan
+# On time: Vercel Cron (vercel.json "crons") calls /api/v1/cron/daily, which dispatches this workflow; the schedule below
+# is the backup (GitHub may start scheduled runs hours late) and skips when the day already ran.
 # Also runnable by hand (Actions → daily → Run workflow) or from the app (Admin → Jobs → Run now).
 on:
   schedule:
@@ -65,4 +67,6 @@ jobs:
         run: |
           if [ "$MARKET" = "REPORT" ]; then python -m app.cli report; exit 0; fi
           ARGS="$MARKET"; [ "$FULL" = "true" ] && ARGS="$ARGS --full"
+          # GitHub's own schedule is a backup (it can start hours late): skip if the on-time Vercel Cron run already did the day
+          [ "${{ github.event_name }}" = "schedule" ] && ARGS="$ARGS --if-not-done"
           python -m app.cli daily $ARGS

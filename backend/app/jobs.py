@@ -216,6 +216,16 @@ def _why_no_digest(db: Session) -> str:
     return f"already sent for the {nse.as_of} session (sent keys: {sent})"
 
 
+def recently_done(db: Session, market: str, hours: int = 12) -> bool:
+    """A scan for this market finished in the last `hours` (the day's run already happened)."""
+    from sqlalchemy import select
+
+    from app.models import ScanRun
+
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return db.scalar(select(ScanRun.id).where(ScanRun.market == market, ScanRun.status == "done", ScanRun.started_at >= since).limit(1)) is not None
+
+
 def dispatch_github(market: str, full: bool = False) -> dict:
     """Start the GitHub Actions 'daily' workflow (used on Vercel, where a request cannot run for an hour)."""
     import httpx

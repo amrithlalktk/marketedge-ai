@@ -503,3 +503,30 @@ def test_review_data_pruned_after_30_days_track_record_kept(app_client, scanned)
         db.commit()
     finally:
         db.close()
+
+
+def test_cron_endpoint_needs_the_secret_and_dispatches(app_client, monkeypatch):
+    from app import jobs
+    from app.core.config import get_settings
+
+    s = get_settings()
+    monkeypatch.setattr(s, "cron_secret", None)
+    assert app_client.get("/api/v1/cron/daily?market=NSE").status_code == 503
+    monkeypatch.setattr(s, "cron_secret", "cron-test-secret-123456")
+    assert app_client.get("/api/v1/cron/daily?market=NSE", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    calls = []
+    monkeypatch.setattr(jobs, "dispatch_github", lambda market, full=False: calls.append(market) or {"dispatched": True})
+    ok = {"Authorization": "Bearer cron-test-secret-123456"}
+    assert app_client.get("/api/v1/cron/daily?market=CRYPTO", headers=ok).json() == {"dispatched": True} and calls == ["CRYPTO"]
+    assert app_client.get("/api/v1/cron/daily?market=XX", headers=ok).status_code == 422
+
+
+def test_late_schedule_skips_a_market_that_already_ran(app_client, scanned):
+    from app.core.db import SessionLocal
+    from app.jobs import recently_done
+
+    db = SessionLocal()
+    try:
+        assert recently_done(db, "NSE") and not recently_done(db, "CRYPTO", hours=0)
+    finally:
+        db.close()
