@@ -461,3 +461,45 @@ def test_nse_session_hours():
 
     assert nse_open(datetime(2026, 10, 6, 10, 0, tzinfo=IST)) and not nse_open(datetime(2026, 10, 6, 16, 0, tzinfo=IST))
     assert not nse_open(datetime(2026, 10, 4, 10, 0, tzinfo=IST))  # Sunday
+
+
+def test_review_data_pruned_after_30_days_track_record_kept(app_client, scanned):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.core.db import SessionLocal
+    from app.jobs import prune_review_data
+    from app.models import MarketSnapshot, ScanRun, Signal, SignalOutcome
+
+    db = SessionLocal()
+    try:
+        run = db.scalar(select(ScanRun).where(ScanRun.market == "NSE", ScanRun.status == "done"))
+        base = db.scalar(select(Signal).where(Signal.scan_run_id == run.id))
+        old = (datetime.now(timezone.utc) - timedelta(days=45)).date()
+
+        def sig(status):
+            s = Signal(scan_run_id=run.id, instrument_id=base.instrument_id, symbol=base.symbol, market="NSE", strategy_key="x",
+                       direction="LONG", status=status, as_of=old, score=1, rr_t2=1, payload={})
+            db.add(s)
+            db.flush()
+            return s.id
+
+        rejected, published, recent = sig("NO_TRADE"), sig("VALID"), base.id
+        db.add(SignalOutcome(signal_id=published, status="resolved", t1_hit=True))
+        snap = MarketSnapshot(scan_run_id=run.id, market="NSE", kind="overview", as_of=old, payload={})
+        db.add(snap)
+        db.commit()
+        snap_id = snap.id
+        out = prune_review_data(db, datetime.now(timezone.utc))
+        db.commit()
+        db.expire_all()
+        assert out["old_candidates"] >= 1 and db.get(Signal, rejected) is None
+        assert db.get(Signal, published) is not None and db.get(SignalOutcome, published) is not None  # track record kept
+        assert db.get(Signal, recent) is not None
+        assert db.get(MarketSnapshot, snap_id) is None  # an older overview exists, newer ones are kept
+        assert db.scalar(select(MarketSnapshot).where(MarketSnapshot.market == "NSE", MarketSnapshot.kind == "overview")) is not None
+        db.delete(db.get(Signal, published))
+        db.commit()
+    finally:
+        db.close()

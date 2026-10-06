@@ -74,6 +74,7 @@ def retention(db: Session, now: Optional[datetime] = None) -> dict:
         "notifications": db.execute(delete(Notification).where(Notification.created_at < now - timedelta(days=s.notification_retention_days))).rowcount,
         "jobs": db.execute(delete(Job).where(Job.created_at < now - timedelta(days=90), Job.status.in_(("done", "failed")))).rowcount,
     }
+    out.update(prune_review_data(db, now))
     # each scan stores its full historical event set; only the latest few per market are ever read (free DB tier: keep it small)
     keep = set()
     for market in {m for (m,) in db.execute(select(ScanRun.market).distinct())}:
@@ -88,6 +89,33 @@ def retention(db: Session, now: Optional[datetime] = None) -> dict:
         db.execute(delete(BacktestTrade).where(BacktestTrade.backtest_id.in_(stale)))
         out["event_sets"] = db.execute(delete(Backtest).where(Backtest.id.in_(stale))).rowcount
     db.commit()
+    return out
+
+
+def prune_review_data(db: Session, now: datetime) -> dict:
+    """Old screen data the analysis never reads again (REVIEW_RETENTION_DAYS, default 30): rejected candidates and
+    republished duplicates (any idea without a tracked result), market snapshots and option-chain snapshots.
+    Kept forever: prices, the NIFTY IV history and every published idea with its result (the track record).
+    The latest snapshot of each kind and the last two option chains are always kept."""
+    from sqlalchemy import delete, exists, select
+    from sqlalchemy.orm import aliased
+
+    from app.models import MarketSnapshot, OptionChainRow, OptionContract, Signal, SignalOutcome
+
+    cutoff = now - timedelta(days=get_settings().review_retention_days)
+    tracked = select(SignalOutcome.signal_id)
+    out = {"old_candidates": db.execute(delete(Signal).where(Signal.as_of < cutoff.date(), Signal.id.not_in(tracked))).rowcount}
+    newer = aliased(MarketSnapshot)
+    superseded = exists().where(newer.market == MarketSnapshot.market, newer.kind == MarketSnapshot.kind, newer.as_of > MarketSnapshot.as_of)
+    out["old_snapshots"] = db.execute(delete(MarketSnapshot).where(MarketSnapshot.as_of < cutoff.date(), superseded)
+                                      .execution_options(synchronize_session=False)).rowcount
+    last_two = [ts for (ts,) in db.execute(select(OptionChainRow.snapshot_ts).distinct().order_by(OptionChainRow.snapshot_ts.desc()).limit(2))]
+    q = delete(OptionChainRow).where(OptionChainRow.snapshot_ts < cutoff)
+    if last_two:
+        q = q.where(OptionChainRow.snapshot_ts.not_in(last_two))
+    out["old_option_quotes"] = db.execute(q).rowcount
+    out["expired_contracts"] = db.execute(delete(OptionContract).where(
+        OptionContract.expiry < cutoff.date(), OptionContract.id.not_in(select(OptionChainRow.contract_id).distinct()))).rowcount
     return out
 
 

@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     prewarm_top_n: int = 40                 # symbols whose analysis/candles are cached right after each scan
     audit_retention_days: int = 365
     notification_retention_days: int = 90
+    review_retention_days: int = 30  # rejected candidates, market snapshots, option-chain snapshots (never prices, IV history or the track record)
     rate_limit_per_minute: int = 120
     auth_rate_limit_per_minute: int = 10
 
