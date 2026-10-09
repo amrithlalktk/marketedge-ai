@@ -65,6 +65,21 @@ def policies(cfg) -> list:
     ]
 
 
+def risk_bands(events: pd.DataFrame) -> dict:
+    """Trades by the stop distance left after the next-open fill (in ATRs). A fill just above the stop makes R tiny, so
+    one trade can swing the average by hundreds of R; the live trader would not take such an entry."""
+    if "risk_atr" not in events or events["risk_atr"].isna().all():
+        return {}
+    bands = pd.cut(events["risk_atr"], [0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.5, 99], include_lowest=True)
+    out = {"bands": [{"risk_atr": str(k), **dg.outcome_stats(g)} for k, g in events.groupby(bands, observed=True) if len(g)]}
+    worst = events.reindex(events["r_multiple"].abs().sort_values(ascending=False).index).head(10)
+    out["largest_r"] = worst[["symbol", "strategy_id", "signal_date", "entry", "stop", "risk_atr", "r_multiple", "exit_reason"]].to_dict("records")
+    for cut in (0.5, 0.8):
+        keep = events[events["risk_atr"] >= cut]
+        out[f"strategy_table_risk_ge_{cut}"] = [{"strategy": sid, **dg.outcome_stats(g)} for sid, g in keep.groupby("strategy_id")]
+    return out
+
+
 def strategy_table(events: pd.DataFrame, split: str) -> list:
     """Every strategy's raw results (no gate) before and after the split: is there an edge, and does it last?"""
     e = events.assign(_ts=pd.to_datetime(events["signal_date"]))
@@ -141,6 +156,7 @@ def report(db: Session, market: str = "NSE", events: Optional[pd.DataFrame] = No
                                       "by_strategy": by(pub, "strategy_id"), "by_regime": by(pub, "regime"),
                                       "by_score_bucket": by(pub, "score_bucket"), "by_evidence_level": by(pub, "evidence_level"),
                                       "rejected_by": g.loc[~g["published"], "gate_failed"].value_counts().to_dict()},
+        "entry_too_close_to_stop": risk_bands(events),
         "gate_comparison": (cmp := dg.compare_policies(events, policies(cfg))),
         "strategy_table": strategy_table(events, cmp["split"]),
         "gate_comparison_excluding_corporate_actions": dg.compare_policies(events[~events["near_corporate_action"]], policies(cfg)[:1] + policies(cfg)[3:4]),
