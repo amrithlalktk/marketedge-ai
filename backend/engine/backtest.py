@@ -7,7 +7,7 @@ Rules (identical for every historical and live setup):
 * Bars are walked from the entry bar onwards. If a bar's open gaps through the
   stop, the fill is the open (worse than the stop). If a bar touches both the
   stop and a target, the STOP is assumed first (conservative; OHLC data cannot
-  tell the intrabar order).
+  tell the intrabar order) and the trade is flagged `ambiguous`.
 * Outcome flags are measured against the ORIGINAL stop:
     t1_hit  - T1 touched before the initial stop
     t2_hit  - T2 touched before the initial stop
@@ -56,6 +56,8 @@ class TradeResult:
     mfe_r: float
     mae_r: float
     t1_date: Optional[str] = None  # date the partial exit at T1 filled (for portfolio simulation)
+    risk_atr: Optional[float] = None  # stop distance from the fill, in ATRs at the signal bar
+    ambiguous: bool = False  # one bar touched both the stop and a target: order unknown, stop assumed (conservative)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -88,7 +90,7 @@ def simulate_trade(f: pd.DataFrame, t: int, direction: str, stop: float, t1: flo
     if risk <= 0:
         return None
 
-    t1_hit = t2_hit = stop_hit = False
+    t1_hit = t2_hit = stop_hit = ambiguous = False
     t1_idx = None
     remaining = 1.0
     realized = 0.0  # sum(fraction * price-return in direction)
@@ -115,6 +117,7 @@ def simulate_trade(f: pd.DataFrame, t: int, direction: str, stop: float, t1: flo
         touched_t2 = sign * ((bar_h if sign == 1 else bar_l) - t2) >= 0
 
         if touched_stop:  # conservative: stop assumed before any target on the same bar
+            ambiguous = ambiguous or bool(touched_t2 or (touched_t1 and not t1_hit))
             if not t1_hit:
                 stop_hit = True
             realized += remaining * sign * (cur_stop - entry) / entry
@@ -155,6 +158,7 @@ def simulate_trade(f: pd.DataFrame, t: int, direction: str, stop: float, t1: flo
         net_return_pct=round(100 * net, 4), r_multiple=round(net * entry / risk, 4),
         mfe_r=round(mfe, 3), mae_r=round(mae, 3),
         t1_date=_d(f.index[t1_idx]) if t1_idx is not None else None,
+        risk_atr=round(risk / a, 3) if a > 0 else None, ambiguous=ambiguous,
     )
 
 

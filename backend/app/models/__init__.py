@@ -247,6 +247,8 @@ class BacktestTrade(Base):
     regime_family: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     score_at_signal: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     score_bucket: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    risk_atr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ambiguous: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     t1_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     __table_args__ = (Index("ix_bt_trades_bt_strategy", "backtest_id", "strategy_key"),)
 

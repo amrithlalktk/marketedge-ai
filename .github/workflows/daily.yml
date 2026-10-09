@@ -14,7 +14,7 @@ on:
       market:
         description: "Market"
         type: choice
-        options: [NSE, CRYPTO, REPORT]   # REPORT: read-only, prints why the latest NIFTY options scan did (not) publish an idea
+        options: [NSE, CRYPTO, REPORT, DIAGNOSE]   # REPORT / DIAGNOSE: read-only (latest scan explanation / losing-trade diagnostics)
         default: NSE
       full:
         description: "Full history reload (first run: true)"
@@ -66,6 +66,7 @@ jobs:
       - name: run ${{ env.MARKET }} pipeline
         run: |
           if [ "$MARKET" = "REPORT" ]; then python -m app.cli report; exit 0; fi
+          if [ "$MARKET" = "DIAGNOSE" ]; then python -m app.cli diagnose --market NSE; exit 0; fi
           ARGS="$MARKET"; [ "$FULL" = "true" ] && ARGS="$ARGS --full"
           # GitHub's own schedule is a backup (it can start hours late): skip if the on-time Vercel Cron run already did the day
           [ "${{ github.event_name }}" = "schedule" ] && ARGS="$ARGS --if-not-done"

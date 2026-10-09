@@ -131,6 +131,8 @@ def main() -> None:
     sub.add_parser("options")
     sub.add_parser("bootstrap-sample")
     sub.add_parser("report")
+    dg = sub.add_parser("diagnose")
+    dg.add_argument("--market", default="NSE")
     args = p.parse_args()
 
     from app import jobs
@@ -159,6 +161,10 @@ def main() -> None:
             print(json.dumps(jobs.scan(db, args.market), indent=2, default=str))
         elif args.cmd == "options":
             print(json.dumps(jobs.options(db), indent=2, default=str))
+        elif args.cmd == "diagnose":
+            from app.services.diagnostics_service import report as diagnose
+
+            print(json.dumps(diagnose(db, args.market), indent=1, default=str))
         elif args.cmd == "report":
             print(json.dumps({"options": options_report(db), "stocks": stocks_report(db), "storage": storage_report(db)}, indent=2, default=str))
         elif args.cmd == "bootstrap-sample":
