@@ -21,7 +21,7 @@ from engine import diagnostics as dg
 log = logging.getLogger(__name__)
 
 
-def build_history(db: Session, market: str = "NSE") -> Tuple[pd.DataFrame, Dict[str, dict], Dict[str, pd.DataFrame]]:
+def build_history(db: Session, market: str = "NSE", candidates: bool = True) -> Tuple[pd.DataFrame, Dict[str, dict], Dict[str, pd.DataFrame]]:
     from app.core.markets import market_config
     from app.services.market_data import instrument_maps, load_bars
     from app.services.settings_service import engine_config
@@ -37,7 +37,13 @@ def build_history(db: Session, market: str = "NSE") -> Tuple[pd.DataFrame, Dict[
     membership, delisted, _ = membership_for(db, market, info, bars)
     vix = bars[mc.vix]["close"] if mc.vix and mc.vix in bars else None
     ctx = analyzer.market_context(bars[mc.benchmark], feats, vix, membership=membership)
-    events = analyzer.build_events(feats, ctx.regime_df, scan_strategies(db),
+    strategies = scan_strategies(db)
+    if candidates:  # version-2 rules under test; relative strength needs the benchmark
+        from engine.candidates import CANDIDATES, add_relative_strength
+
+        feats = {k: add_relative_strength(v, bars[mc.benchmark]["close"]) for k, v in feats.items()}
+        strategies = strategies + list(CANDIDATES.values())
+    events = analyzer.build_events(feats, ctx.regime_df, strategies,
                                    universe_dates={k: (v["listed_on"], v["delisted_on"]) for k, v in info.items()},
                                    membership=membership, final_symbols=delisted)
     return events, info, bars
@@ -52,7 +58,21 @@ def policies(cfg) -> list:
         dg.GatePolicy("n≥100, mean R > 0", min_sample=100, levels=(1, 2), **base),
         dg.GatePolicy("n≥100, mean R − 1 SE > 0", min_sample=100, lcb_z=1.0, levels=(1, 2), **base),
         dg.GatePolicy("n≥100, mean R − 1.64 SE > 0", min_sample=100, lcb_z=1.645, levels=(1, 2), **base),
+        # predeclared acceptance candidates: regime cells only (no fallback to all regimes), plus a last-12-months check
+        dg.GatePolicy("A: regime cell n≥100, mean R − 1 SE > 0", min_sample=100, lcb_z=1.0, levels=(1,), **base),
+        dg.GatePolicy("B: A + last 12 months n≥30, mean R > 0", min_sample=100, lcb_z=1.0, levels=(1,), recent_min_n=30, **base),
+        dg.GatePolicy("C: B without the setup-score rule", min_sample=100, lcb_z=1.0, levels=(1,), recent_min_n=30, use_score=False, **base),
     ]
+
+
+def strategy_table(events: pd.DataFrame, split: str) -> list:
+    """Every strategy's raw results (no gate) before and after the split: is there an edge, and does it last?"""
+    e = events.assign(_ts=pd.to_datetime(events["signal_date"]))
+    rows = []
+    for sid, g in e.groupby("strategy_id"):
+        rows.append({"strategy": sid, "design": dg.outcome_stats(g[g["_ts"] < split]), "out_of_sample": dg.outcome_stats(g[g["_ts"] >= split]),
+                     "out_of_sample_by_regime": dg.by_group(g[g["_ts"] >= split], "regime_family", min_trades=20)})
+    return sorted(rows, key=lambda x: -(x["out_of_sample"].get("expectancy_r") or -9))
 
 
 def track_record(db: Session, market: str, events: Optional[pd.DataFrame] = None) -> Dict:
@@ -121,7 +141,8 @@ def report(db: Session, market: str = "NSE", events: Optional[pd.DataFrame] = No
                                       "by_strategy": by(pub, "strategy_id"), "by_regime": by(pub, "regime"),
                                       "by_score_bucket": by(pub, "score_bucket"), "by_evidence_level": by(pub, "evidence_level"),
                                       "rejected_by": g.loc[~g["published"], "gate_failed"].value_counts().to_dict()},
-        "gate_comparison": dg.compare_policies(events, policies(cfg)),
+        "gate_comparison": (cmp := dg.compare_policies(events, policies(cfg))),
+        "strategy_table": strategy_table(events, cmp["split"]),
         "gate_comparison_excluding_corporate_actions": dg.compare_policies(events[~events["near_corporate_action"]], policies(cfg)[:1] + policies(cfg)[3:4]),
         "track_record": track_record(db, market, events),
         "notes": [

@@ -35,9 +35,14 @@ class GatePolicy:
     min_rr: float = 2.0
     max_stop_pct: float = 10.0
     min_t1_r: float = 1.0
+    use_score: bool = True      # apply the setup-score rule
+    recent_min_n: int = 0       # >0: also require ≥ this many trades in the last RECENT_DAYS with a positive mean R
 
     def to_dict(self) -> dict:
         return {**asdict(self), "levels": [LEVELS[i][0] for i in self.levels]}
+
+
+RECENT_DAYS = 365
 
 
 def _prepare(events: pd.DataFrame) -> pd.DataFrame:
@@ -56,22 +61,33 @@ def prior_evidence(events: pd.DataFrame) -> pd.DataFrame:
     e = _prepare(events)
     out = pd.DataFrame(index=e.index)
     r = e["r_multiple"].to_numpy(dtype=float)
+    hit1 = e["t1_hit"].astype(bool).to_numpy(dtype=float)
     for li, (_, cols) in enumerate(LEVELS):
         n = np.zeros(len(e), dtype=int)
         s1 = np.zeros(len(e))
         s2 = np.zeros(len(e))
+        h1 = np.zeros(len(e))
+        nr = np.zeros(len(e), dtype=int)
+        s1r = np.zeros(len(e))
         valid = e[cols].notna().all(axis=1)
         for _, g in e[valid].groupby(cols, sort=False):
             order = np.argsort(g["exit_ts"].to_numpy())
             ex = g["exit_ts"].to_numpy()[order]
             rr = r[g.index.to_numpy()][order]
+            hh = hit1[g.index.to_numpy()][order]
             c1, c2 = np.concatenate([[0.0], np.cumsum(rr)]), np.concatenate([[0.0], np.cumsum(rr * rr)])
-            k = np.searchsorted(ex, g["signal_ts"].to_numpy(), side="left")  # exits strictly before the signal
-            n[g.index], s1[g.index], s2[g.index] = k, c1[k], c2[k]
+            ch = np.concatenate([[0.0], np.cumsum(hh)])
+            sig = g["signal_ts"].to_numpy()
+            k = np.searchsorted(ex, sig, side="left")  # exits strictly before the signal
+            k0 = np.searchsorted(ex, sig - np.timedelta64(RECENT_DAYS, "D"), side="left")
+            n[g.index], s1[g.index], s2[g.index], h1[g.index] = k, c1[k], c2[k], ch[k]
+            nr[g.index], s1r[g.index] = k - k0, c1[k] - c1[k0]
         mean = np.divide(s1, n, out=np.full(len(e), np.nan), where=n > 0)
         var = np.divide(s2, n, out=np.full(len(e), np.nan), where=n > 0) - mean ** 2
         sd = np.sqrt(np.clip(var * np.divide(n, n - 1, out=np.ones(len(e)), where=n > 1), 0, None))
         out[f"n{li}"], out[f"mean{li}"], out[f"sd{li}"] = n, mean, sd
+        out[f"t1rate{li}"] = np.divide(h1, n, out=np.full(len(e), np.nan), where=n > 0)
+        out[f"nr{li}"], out[f"meanr{li}"] = nr, np.divide(s1r, nr, out=np.full(len(e), np.nan), where=nr > 0)
     return pd.concat([e, out], axis=1)
 
 
@@ -82,11 +98,15 @@ def gate_replay(events: pd.DataFrame, policy: GatePolicy, evidence: Optional[pd.
     n_sel = np.zeros(len(e), dtype=int)
     m_sel = np.full(len(e), np.nan)
     sd_sel = np.full(len(e), np.nan)
+    t1_sel = np.full(len(e), np.nan)
+    nr_sel = np.zeros(len(e), dtype=int)
+    mr_sel = np.full(len(e), np.nan)
     lvl = np.full(len(e), None, dtype=object)
     chosen = np.zeros(len(e), dtype=bool)
     for li in policy.levels:  # first level with enough evidence, like probability.estimate
         take = ~chosen & (e[f"n{li}"].to_numpy() >= policy.min_sample)
         n_sel[take], m_sel[take], sd_sel[take] = e[f"n{li}"].to_numpy()[take], e[f"mean{li}"].to_numpy()[take], e[f"sd{li}"].to_numpy()[take]
+        t1_sel[take], nr_sel[take], mr_sel[take] = e[f"t1rate{li}"].to_numpy()[take], e[f"nr{li}"].to_numpy()[take], e[f"meanr{li}"].to_numpy()[take]
         lvl[take] = LEVELS[li][0]
         chosen |= take
     se = np.divide(sd_sel, np.sqrt(n_sel), out=np.full(len(e), np.nan), where=n_sel > 0)
@@ -96,7 +116,8 @@ def gate_replay(events: pd.DataFrame, policy: GatePolicy, evidence: Optional[pd.
     rules = [
         ("Historical sample size", chosen),
         ("Backtest validity", np.nan_to_num(lcb, nan=-1) > 0),
-        ("Setup score", e["score_at_signal"].fillna(0).to_numpy() >= policy.min_score),
+        ("Recent performance", (nr_sel >= policy.recent_min_n) & (np.nan_to_num(mr_sel, nan=-1) > 0) if policy.recent_min_n else np.ones(len(e), dtype=bool)),
+        ("Setup score", (e["score_at_signal"].fillna(0).to_numpy() >= policy.min_score) if policy.use_score else np.ones(len(e), dtype=bool)),
         ("Risk/reward", e["rr_t2_planned"].fillna(0).to_numpy() >= policy.min_rr),
         ("Stop width", e["stop_pct"].to_numpy() <= policy.max_stop_pct),
         ("Target distance", e["t1_r"].fillna(0).to_numpy() >= policy.min_t1_r),
@@ -109,7 +130,22 @@ def gate_replay(events: pd.DataFrame, policy: GatePolicy, evidence: Optional[pd.
         ok &= passed
     e["published"], e["gate_failed"] = ok, failed
     e["evidence_level"], e["evidence_n"], e["evidence_mean_r"] = lvl, n_sel, np.round(m_sel, 3)
+    e["predicted_t1_rate"] = np.round(100 * t1_sel, 1)
     return e
+
+
+def calibration(df: pd.DataFrame) -> Dict:
+    """Shown chance (prior Target-1 rate of the evidence used) vs what then happened, by predicted band."""
+    d = df.dropna(subset=["predicted_t1_rate"])
+    if d.empty:
+        return {"status": "no data"}
+    bands = pd.cut(d["predicted_t1_rate"], [0, 25, 35, 45, 55, 100], include_lowest=True)
+    rows = [{"predicted": str(k), "trades": int(len(g)), "avg_predicted": round(float(g["predicted_t1_rate"].mean()), 1),
+             "actual": round(100 * float(g["t1_hit"].astype(bool).mean()), 1)} for k, g in d.groupby(bands, observed=True) if len(g)]
+    gap = float(d["predicted_t1_rate"].mean() - 100 * d["t1_hit"].astype(bool).mean())
+    return {"avg_predicted_t1": round(float(d["predicted_t1_rate"].mean()), 1), "actual_t1": round(100 * float(d["t1_hit"].astype(bool).mean()), 1),
+            "overstatement_pts": round(gap, 1), "status": "calibrated" if abs(gap) <= 3 else ("overstated" if gap > 0 else "understated"),
+            "bands": rows}
 
 
 def max_drawdown_r(df: pd.DataFrame) -> Optional[float]:
@@ -190,8 +226,11 @@ def compare_policies(events: pd.DataFrame, policies: List[GatePolicy], split: Op
     for p in policies:
         g = gate_replay(events, p, ev)
         pub = g[g["published"]]
+        oos = pub[pub["signal_ts"] >= s]
         rows.append({"policy": p.to_dict(),
-                     "design": outcome_stats(pub[pub["signal_ts"] < s]), "out_of_sample": outcome_stats(pub[pub["signal_ts"] >= s]),
+                     "design": outcome_stats(pub[pub["signal_ts"] < s]), "out_of_sample": outcome_stats(oos),
+                     "out_of_sample_by_strategy": by_group(oos, "strategy_id", min_trades=10),
+                     "out_of_sample_calibration": calibration(oos),
                      "rejected_out_of_sample": outcome_stats(g[(~g["published"]) & (g["signal_ts"] >= s)])})
     return {"split": split, "period": [str(ev["signal_ts"].min().date()), str(ev["exit_ts"].max().date())], "policies": rows}
 
@@ -200,7 +239,7 @@ def compare_policies(events: pd.DataFrame, policies: List[GatePolicy], split: Op
 SPLIT_RATIOS = (1 / 2, 1 / 3, 1 / 4, 1 / 5, 1 / 10, 2 / 3, 3 / 4, 4 / 5, 2 / 5, 1 / 6, 1 / 8)
 
 
-def corporate_action_gaps(bars: Dict[str, pd.DataFrame], min_jump: float = 0.25, tol: float = 0.03) -> pd.DataFrame:
+def corporate_action_gaps(bars: Dict[str, pd.DataFrame], min_jump: float = 0.25, tol: float = 0.02) -> pd.DataFrame:
     """Overnight jumps (open vs previous close) of more than `min_jump` that stay (the next close does not undo them)
     and sit within `tol` of a common split/bonus ratio — most likely unadjusted corporate actions, not news."""
     rows = []
