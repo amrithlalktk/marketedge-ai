@@ -21,7 +21,7 @@ from engine import diagnostics as dg
 log = logging.getLogger(__name__)
 
 
-def build_history(db: Session, market: str = "NSE", candidates: bool = True) -> Tuple[pd.DataFrame, Dict[str, dict], Dict[str, pd.DataFrame]]:
+def build_history(db: Session, market: str = "NSE", candidates: bool = True, levels_cfg=None) -> Tuple[pd.DataFrame, Dict[str, dict], Dict[str, pd.DataFrame]]:
     from app.core.markets import market_config
     from app.services.market_data import instrument_maps, load_bars
     from app.services.settings_service import engine_config
@@ -45,8 +45,27 @@ def build_history(db: Session, market: str = "NSE", candidates: bool = True) -> 
         strategies = strategies + list(CANDIDATES.values())
     events = analyzer.build_events(feats, ctx.regime_df, strategies,
                                    universe_dates={k: (v["listed_on"], v["delisted_on"]) for k, v in info.items()},
-                                   membership=membership, final_symbols=delisted)
+                                   membership=membership, final_symbols=delisted, levels_cfg=levels_cfg)
     return events, info, bars
+
+
+def stop_distance_hypothesis(db: Session, market: str, base_events: pd.DataFrame, split: str) -> dict:
+    """Predeclared test (not tuned): a structural stop is used only when it is ≥ 1.5 ATR away (else the 2×ATR stop).
+    Strategy results before and after the split, next to the current rules, and the acceptance verdict for each."""
+    from dataclasses import replace
+
+    from app.services.settings_service import engine_config
+    from engine import acceptance
+
+    cfg = engine_config(db, market=market)
+    alt, _, _ = build_history(db, market, candidates=True, levels_cfg=replace(cfg.levels, min_stop_atr=1.5))
+    sids = sorted(set(base_events["strategy_id"]) | set(alt["strategy_id"]))
+    asof = pd.to_datetime(base_events["exit_date"]).max() + pd.Timedelta(days=1)
+    acc_now, acc_alt = acceptance.evaluate(base_events, sids, asof, cfg.validation), acceptance.evaluate(alt, sids, asof, cfg.validation)
+    return {"hypothesis": "structural stop only if ≥ 1.5 ATR away (current: ≥ 0.8 ATR); otherwise 2×ATR",
+            "current": strategy_table(base_events, split), "alternative": strategy_table(alt, split),
+            "acceptance_current": {k: {"status": v["status"], "oos": v.get("out_of_sample"), "reasons": v["reasons"]} for k, v in acc_now.items()},
+            "acceptance_alternative": {k: {"status": v["status"], "oos": v.get("out_of_sample"), "reasons": v["reasons"]} for k, v in acc_alt.items()}}
 
 
 def policies(cfg) -> list:
@@ -117,7 +136,7 @@ def track_record(db: Session, market: str, events: Optional[pd.DataFrame] = None
 
 
 def report(db: Session, market: str = "NSE", events: Optional[pd.DataFrame] = None, info: Optional[dict] = None,
-           bars: Optional[dict] = None) -> Dict:
+           bars: Optional[dict] = None, hypotheses: bool = False) -> Dict:
     from app.services.settings_service import engine_config
 
     if events is None:
@@ -161,6 +180,7 @@ def report(db: Session, market: str = "NSE", events: Optional[pd.DataFrame] = No
         "strategy_table": strategy_table(events, cmp["split"]),
         "gate_comparison_excluding_corporate_actions": dg.compare_policies(events[~events["near_corporate_action"]], policies(cfg)[:1] + policies(cfg)[3:4]),
         "track_record": track_record(db, market, events),
+        **({"stop_distance_hypothesis": stop_distance_hypothesis(db, market, events, cmp["split"])} if hypotheses else {}),
         "notes": [
             "Measured on the stored daily history with the live rules: entry at the next open, stop assumed first when one day touches "
             "stop and target, costs and slippage included, one position per symbol and strategy.",

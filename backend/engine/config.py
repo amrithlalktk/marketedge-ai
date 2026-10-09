@@ -55,6 +55,7 @@ class LevelConfig:
     t3_r: float = 4.5
     resistance_lookback: int = 250
     max_chase_atr: float = 0.5  # skip if next open gaps more than this beyond signal close
+    min_fill_risk_atr: float = 0.5  # skip if the next open leaves less than this distance to the stop (R would be meaningless)
 
 
 @dataclass
@@ -71,6 +72,15 @@ class ValidationConfig:
     earnings_warn_days: int = 10
     abnormal_atr_percentile: float = 0.98
     suspicious_volume_mult: float = 10.0
+    # strategy acceptance (engine.acceptance): out-of-sample = the most recent `accept_oos_fraction` of the history
+    accept_enabled: bool = True
+    accept_oos_fraction: float = 0.4
+    accept_min_trades: int = 100           # initial screening threshold, not proof of reliability
+    accept_lcb_z: float = 1.0              # out-of-sample mean R − z·SE must be > 0
+    accept_min_profit_factor: float = 1.1
+    accept_max_drawdown_r: float = 40.0
+    accept_require_design_positive: bool = True
+    accept_min_positive_years: float = 0.5
 
 
 @dataclass

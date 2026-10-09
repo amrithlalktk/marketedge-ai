@@ -3,7 +3,8 @@
 Rules (identical for every historical and live setup):
 * Signal is evaluated on the close of bar t. Levels are frozen at t.
 * Entry at the open of bar t+1 plus slippage. The trade is SKIPPED if that
-  open gaps more than `max_chase_atr` beyond the signal close, or through the stop.
+  open gaps more than `max_chase_atr` beyond the signal close, through the stop, or
+  leaves less than `min_risk_atr` ATR to the stop (a near-zero risk makes R meaningless).
 * Bars are walked from the entry bar onwards. If a bar's open gaps through the
   stop, the fill is the open (worse than the stop). If a bar touches both the
   stop and a target, the STOP is assumed first (conservative; OHLC data cannot
@@ -69,7 +70,7 @@ def _d(ix) -> str:
 
 def simulate_trade(f: pd.DataFrame, t: int, direction: str, stop: float, t1: float, t2: float,
                    bt: BacktestConfig, max_chase_atr: float, symbol: str = "", strategy_id: str = "",
-                   data_final: bool = False) -> Optional[TradeResult]:
+                   data_final: bool = False, min_risk_atr: float = 0.0) -> Optional[TradeResult]:
     """`data_final=True` means the series will never get more bars (delisted instrument): a trade still
     open at the last bar is closed there (exit_reason "delisted") instead of being excluded — excluding
     it would silently drop the crash-into-delisting losses (survivorship bias)."""
@@ -87,8 +88,8 @@ def simulate_trade(f: pd.DataFrame, t: int, direction: str, stop: float, t1: flo
     slip = bt.costs.slippage_pct / 100
     entry = raw_open * (1 + sign * slip)
     risk = abs(entry - stop)
-    if risk <= 0:
-        return None
+    if risk <= 0 or risk < min_risk_atr * a:
+        return None  # opened (almost) at the stop: no room left, entry invalid
 
     t1_hit = t2_hit = stop_hit = ambiguous = False
     t1_idx = None
@@ -184,8 +185,9 @@ def backtest_symbol(f: pd.DataFrame, symbol: str, spec: StrategySpec, signals: p
         levels = compute_levels(f, t, spec.direction, spec.levels or lv)
         if levels is None:
             continue
+        lvc = spec.levels or lv
         tr = simulate_trade(f, t, spec.direction, levels.stop, levels.targets[0], levels.targets[1],
-                            bt_local, lv.max_chase_atr, symbol, strategy_id, data_final=data_final)
+                            bt_local, lvc.max_chase_atr, symbol, strategy_id, data_final=data_final, min_risk_atr=lvc.min_fill_risk_atr)
         if tr is None:
             continue
         d = tr.to_dict()

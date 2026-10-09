@@ -81,3 +81,27 @@ def test_corporate_action_audit_finds_a_split_but_not_a_crash():
     ev = pd.DataFrame({"symbol": ["SPLIT", "SPLIT", "CRASH"], "signal_date": ["2023-01-03", "2025-01-01", "2023-01-03"],
                        "exit_date": ["2023-01-06", "2025-01-10", "2023-01-06"]})
     assert list(dg.trades_spanning(ev, g)) == [True, False, False]
+
+
+def test_fill_just_above_the_stop_is_skipped():
+    # signal close 100, stop 99.2; next open 99.5 leaves 0.3 (< 0.5 × ATR 2) to the stop → no trade, not a +100 R outlier
+    f = bars([[100, 101, 99, 100], [99.5, 112, 99.4, 110]])
+    assert simulate_trade(f, 0, "LONG", stop=99.2, t1=103, t2=109, bt=BT, max_chase_atr=0.5, min_risk_atr=0.5) is None
+    assert simulate_trade(f, 0, "LONG", stop=99.2, t1=103, t2=109, bt=BT, max_chase_atr=0.5).t2_hit  # old behaviour, for contrast
+
+
+def test_acceptance_needs_out_of_sample_evidence_and_rejects_a_faded_edge():
+    from engine.acceptance import UNVALIDATED, VALIDATED, evaluate
+    from engine.config import ValidationConfig
+
+    days = pd.bdate_range("2021-01-04", periods=600)
+    good = [(str(d.date()), str((d + pd.Timedelta(days=3)).date()), 1.5 if i % 2 else -1.0) for i, d in enumerate(days)]
+    faded = [(s, e, (1.5 if i % 2 else -1.0) if i < 360 else (0.8 if i % 2 else -1.0)) for i, (s, e, _) in enumerate(good)]
+    cfg = ValidationConfig(accept_min_trades=100, accept_max_drawdown_r=1e9)
+    ev = pd.concat([_ev(good).assign(strategy_id="good"), _ev(faded).assign(strategy_id="faded")], ignore_index=True)
+    res = evaluate(ev, ["good", "faded", "missing"], "2023-06-01", cfg)
+    assert res["good"]["status"] == VALIDATED and res["good"]["out_of_sample"]["trades"] >= 100
+    assert res["faded"]["status"] == UNVALIDATED and any("out-of-sample expectancy" in r for r in res["faded"]["reasons"])
+    assert res["missing"]["status"] == UNVALIDATED
+    few = evaluate(ev[ev["strategy_id"] == "good"].head(80), ["good"], "2023-06-01", cfg)
+    assert few["good"]["status"] == UNVALIDATED and "out-of-sample trades" in few["good"]["reasons"][0]

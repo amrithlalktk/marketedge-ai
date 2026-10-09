@@ -191,7 +191,7 @@ def run_options(db: Session, today: Optional[date] = None) -> ScanRun:
         db.commit()
         from app.services.scan_service import resolve_outcomes
 
-        run.stats = {**run.stats, "outcomes_resolved": resolve_outcomes(db, {und.symbol: fi}, cfg.backtest, cfg.levels.max_chase_atr, MARKET)}
+        run.stats = {**run.stats, "outcomes_resolved": resolve_outcomes(db, {und.symbol: fi}, cfg.backtest, cfg.levels.max_chase_atr, MARKET, cfg.levels.min_fill_risk_atr)}
         db.commit()
         get_cache().invalidate_prefix("me:opt:")
         try:

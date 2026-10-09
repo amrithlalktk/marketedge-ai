@@ -27,7 +27,7 @@ from .probability import estimate, score_bucket, similar_examples
 from .regime import classify, describe
 from .scoring import combine, compute_score, score_historical
 from .strategies import STRATEGIES, StrategySpec, detect
-from .validation import validate, verdict
+from .validation import Check, validate, verdict
 from .walkforward import default_segments, overfit_warnings, segment_stats
 
 DISCLAIMER = ("Historical/backtested performance and probability estimates do not guarantee future results. "
@@ -162,7 +162,11 @@ class Analyzer:
                         data_meta: Optional[dict] = None, intraday_1h: Optional[pd.DataFrame] = None,
                         strategies: Optional[List[StrategySpec]] = None, market: str = "NSE", only_active: bool = True,
                         calendar: str = "weekdays", liquidity_mult: float = 1.0, liquidity_currency: str = "INR",
-                        short_note: Optional[str] = None) -> List[dict]:
+                        short_note: Optional[str] = None, acceptance: Optional[Dict[str, dict]] = None,
+                        calibration: Optional[dict] = None) -> List[dict]:
+        """`acceptance` (engine.acceptance.evaluate): when given, a strategy that is not validated out of sample adds a
+        blocking check — its setups can be paper trades but never published ideas. `calibration` is attached to the
+        probability so the shown chance carries its measured accuracy."""
         strategies = strategies or list(STRATEGIES.values())
         instrument = instrument or {}
         t = len(f) - 1
@@ -190,6 +194,16 @@ class Analyzer:
                               today=today, cfg=self.cfg.validation, earnings_in_days=earnings_in_days, data_meta=data_meta,
                               is_index=bool(instrument.get("is_index") or instrument.get("volumeless")), calendar=calendar,
                               liquidity_mult=liquidity_mult, liquidity_currency=liquidity_currency)
+            validation = None
+            if acceptance is not None:
+                from .acceptance import VALIDATED, as_check_detail
+
+                validation = acceptance.get(spec.id)
+                checks.append(Check("Strategy validation (out-of-sample)", bool(validation and validation["status"] == VALIDATED), "block",
+                                    as_check_detail(validation)))
+                prob = {**prob, "out_of_sample": (validation or {}).get("out_of_sample"), "validation_status": (validation or {}).get("status", "UNVALIDATED")}
+            if calibration is not None:
+                prob = {**prob, "calibration": calibration}
             status = verdict(checks) if fired else "NO_SIGNAL"
             sign = 1 if spec.direction == "LONG" else -1
             ref = levels.reference_price
@@ -232,6 +246,7 @@ class Analyzer:
                 "market_regime": reg,
                 "mtf": m,
                 "probability": prob,
+                "validation": validation,
                 "expected_holding_days": prob.get("avg_holding_bars"),
                 "historical_examples": similar_examples(events, spec.id, as_of, symbol, 8),
                 "checks": [c.to_dict() for c in checks],

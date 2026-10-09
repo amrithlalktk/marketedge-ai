@@ -164,7 +164,7 @@ def main() -> None:
         elif args.cmd == "diagnose":
             from app.services.diagnostics_service import report as diagnose
 
-            print(json.dumps(diagnose(db, args.market), indent=1, default=str))
+            print(json.dumps(diagnose(db, args.market, hypotheses=True), indent=1, default=str))
         elif args.cmd == "report":
             print(json.dumps({"options": options_report(db), "stocks": stocks_report(db), "storage": storage_report(db)}, indent=2, default=str))
         elif args.cmd == "bootstrap-sample":

@@ -24,7 +24,8 @@ class StrategySpec:
     description: str
     conditions: List[str]
     detect: Callable[[pd.DataFrame], pd.Series] = field(repr=False)
-    entry_rule: str = "Next session open after the signal bar closes; skipped if the open gaps more than 0.5×ATR beyond the signal close."
+    entry_rule: str = ("Next session open after the signal bar closes; skipped if the open gaps more than 0.5×ATR beyond the signal close "
+                       "or leaves less than 0.5×ATR to the stop.")
     stop_rule: str = "Last confirmed swing low/high ± 0.2×ATR when it lies 0.8–3.5 ATR away; otherwise 2×ATR from entry."
     target_rule: str = "T1: first S/R level ≥1R away (capped at 2R, fallback 1.5R). T2: next level beyond T1 (fallback 3R). T3: 4.5R."
     max_hold_bars: int = 20

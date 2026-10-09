@@ -133,15 +133,29 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
             live = current_members(membership)
             feats = {k: v for k, v in feats.items() if k in live}
 
+        # strategy acceptance: out-of-sample validation from the same event set, using only trades that exited before today
+        from engine.acceptance import calibration_status
+        from engine.acceptance import evaluate as acceptance_eval
+
+        acceptance = acceptance_eval(events, [sp.id for sp in specs], today, cfg.validation) if cfg.validation.accept_enabled else None
+        calibration = calibration_status(events, today, cfg.validation)
+
         # no fundamentals / earnings / FX feeds in the lite build: technical setups, liquidity in the market's own currency
         result = analyzer.scan(feats, events, ctx, today=today, instruments=info, meta=meta, market=market,
                                fundamentals={}, earnings={}, strategies=specs, liquidity_mults={},
-                               eval_kwargs={"calendar": prof.calendar, "liquidity_currency": prof.liquidity_currency, "short_note": prof.short_note or None})
+                               eval_kwargs={"calendar": prof.calendar, "liquidity_currency": prof.liquidity_currency, "short_note": prof.short_note or None,
+                                            "acceptance": acceptance, "calibration": calibration})
         enrich_setups(db, result["valid"] + result["no_trade"], market, info, bars)
         allsetups = result["valid"] + result["no_trade"]  # enrichment may add blocking checks (e.g. crypto spread)
+        for x in allsetups:
+            x["paper_trade"] = is_paper_trade(x)
         result["valid"] = sorted([x for x in allsetups if x["status"] == "VALID"], key=lambda x: -x["score"])
         result["no_trade"] = [x for x in allsetups if x["status"] != "VALID"]
-        if not result["valid"] and not result["market_message"]:
+        validated = sorted(k for k, v in (acceptance or {}).items() if v["status"] == "VALIDATED")
+        if not result["valid"] and acceptance is not None and not validated:
+            result["market_message"] = ("NO TRADE: no strategy is validated out of sample right now, so nothing is published as a trade idea. "
+                                        f"{sum(x['paper_trade'] for x in allsetups)} setup(s) are tracked as paper trades.")
+        elif not result["valid"] and not result["market_message"]:
             result["market_message"] = "NO VALID SETUP: no candidate passed every validation check today."
 
         bt = Backtest(kind="system_events", strategy_key="all", status="done", params={"scan_run_id": run.id, "engine_version": ENGINE_VERSION},
@@ -161,7 +175,7 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
                          t1_hit_rate=setup["probability"].get("t1_hit_rate"), sample_size=setup["probability"].get("sample_size", 0),
                          is_sample_data=bool(setup["data"].get("is_sample")), payload=_json_safe(setup))
             db.add(sig)
-            if setup["status"] == "VALID":
+            if setup["status"] == "VALID" or setup.get("paper_trade"):
                 db.flush()
                 # a rescan of the same session republishes the setup; track its outcome only once
                 dup = db.scalar(select(SignalOutcome.signal_id).join(Signal, Signal.id == SignalOutcome.signal_id).where(
@@ -198,12 +212,21 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
             "sectors": {"sectors": sectors, "as_of": result["as_of"], "is_sample": any_sample,
                         "note": "Rankings describe current relative strength and are not forecasts of future performance."},
             "strategy_performance": {"strategies": perf, "is_sample": any_sample},
+            "validation": {"strategies": acceptance, "validated": validated, "calibration": calibration, "as_of": result["as_of"],
+                           "enabled": acceptance is not None, "is_sample": any_sample},
             "scan_summary": {"market_message": result["market_message"], "valid": len(result["valid"]), "no_trade": len(result["no_trade"]),
+                             "paper": sum(bool(x.get("paper_trade")) for x in allsetups), "validated_strategies": validated,
                              "candidates_evaluated": result["candidates_evaluated"], "instruments_scanned": result["instruments_scanned"],
                              "as_of": result["as_of"], "is_sample": any_sample,
                              "stale_instruments": sorted(k for k, v in meta.items() if v.get("delayed") and not info[k]["is_index"]
                                                          and not info[k].get("delisted_on"))},  # delisted history is final, not late
         }
+        try:  # losing-trade diagnostics of the same event set (never fails the scan)
+            from app.services.diagnostics_service import report as diagnostics_report
+
+            snaps["diagnostics"] = {**diagnostics_report(db, market, events=events, info=info, bars=bars), "is_sample": any_sample}
+        except Exception:
+            log.exception("diagnostics after scan failed")
         for kind, payload in snaps.items():
             db.add(MarketSnapshot(scan_run_id=run.id, market=market, kind=kind, as_of=as_of, payload=_json_safe(payload)))
 
@@ -212,7 +235,7 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
             | ({"universe": universe} if universe else {})
         run.status, run.finished_at = "done", datetime.now(timezone.utc)
         db.commit()
-        resolved = resolve_outcomes(db, feats, cfg.backtest, cfg.levels.max_chase_atr, market)
+        resolved = resolve_outcomes(db, feats, cfg.backtest, cfg.levels.max_chase_atr, market, cfg.levels.min_fill_risk_atr)
         try:  # alerts and paper trades react to the freshly scanned bars; never fail the scan for them
             from app.services import alert_service, portfolio_service
 
@@ -234,6 +257,15 @@ def run_scan(db: Session, market: Optional[str] = None, today: Optional[date] = 
         run.status, run.error, run.finished_at = "failed", str(exc)[:2000], datetime.now(timezone.utc)
         db.commit()
         raise
+
+
+VALIDATION_CHECK = "Strategy validation (out-of-sample)"
+
+
+def is_paper_trade(setup: dict) -> bool:
+    """Passed every check except strategy validation: tracked as a paper trade, never published as an idea."""
+    blocks = {c["name"] for c in setup.get("checks", []) if not c["passed"] and c["severity"] == "block"}
+    return setup.get("status") != "VALID" and blocks == {VALIDATION_CHECK}
 
 
 def enrich_setups(db: Session, setups: list, market: str, info: Dict[str, dict], bars: Dict[str, pd.DataFrame]) -> None:
@@ -267,7 +299,8 @@ def enrich_setups(db: Session, setups: list, market: str, info: Dict[str, dict],
             st["status"] = "NO_TRADE"
 
 
-def resolve_outcomes(db: Session, feats: Dict[str, pd.DataFrame], bt: BacktestConfig, max_chase_atr: float, market: str = "NSE") -> int:
+def resolve_outcomes(db: Session, feats: Dict[str, pd.DataFrame], bt: BacktestConfig, max_chase_atr: float, market: str = "NSE",
+                     min_risk_atr: float = 0.5) -> int:
     """Forward-track published VALID signals with exactly the backtest rules (live track record)."""
     n = 0
     from app.services.strategy_service import scan_strategies
@@ -289,7 +322,8 @@ def resolve_outcomes(db: Session, feats: Dict[str, pd.DataFrame], bt: BacktestCo
         spec = STRATEGIES.get(key) or custom.get(key)
         hold = spec.max_hold_bars if spec else bt.max_hold_bars
         tr = simulate_trade(f, t, sig.direction, p["stop"], p["targets"][0], p["targets"][1],
-                            BacktestConfig(max_hold_bars=hold, partial_at_t1=bt.partial_at_t1, costs=bt.costs), max_chase_atr, sig.symbol, sig.strategy_key)
+                            BacktestConfig(max_hold_bars=hold, partial_at_t1=bt.partial_at_t1, costs=bt.costs), max_chase_atr, sig.symbol, sig.strategy_key,
+                            min_risk_atr=min_risk_atr)
         if tr is not None:
             outcome.status, outcome.t1_hit, outcome.t2_hit, outcome.stop_hit = "resolved", tr.t1_hit, tr.t2_hit, tr.stop_hit
             outcome.exit_reason, outcome.net_return_pct, outcome.resolved_at = tr.exit_reason, tr.net_return_pct, datetime.now(timezone.utc)
