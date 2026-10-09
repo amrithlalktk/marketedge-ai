@@ -105,3 +105,10 @@ def breadth(db: Session = Depends(get_db), market: Optional[str] = MARKET_Q):
 @router.get("/sectors", dependencies=[Depends(require("market:read"))])
 def sectors(db: Session = Depends(get_db), market: Optional[str] = MARKET_Q):
     return _need(latest_snapshot(db, "sectors", market), "sector rotation")
+
+
+@router.get("/diagnostics", dependencies=[Depends(require("market:read"))])
+def diagnostics(db: Session = Depends(get_db), market: Optional[str] = MARKET_Q):
+    """Losing-trade diagnostics of the latest scan's historical trades, plus each strategy's out-of-sample validation."""
+    diag = _need(latest_snapshot(db, "diagnostics", market), "diagnostics")
+    return {**diag, "validation": latest_snapshot(db, "validation", market)}

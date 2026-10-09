@@ -13,6 +13,7 @@ import { useApi } from "@/lib/useApi";
 
 type MarketFilter = "ALL" | "NFO" | "NSE" | "CRYPTO";
 type ResultFilter = "all" | "closed" | "open";
+type Kind = "ideas" | "paper";
 
 const MARKET_LABEL: Record<PastIdea["market"], string> = { NFO: "NIFTY option", NSE: "NSE stock", CRYPTO: "Crypto" };
 
@@ -89,6 +90,7 @@ function IdeaRow({ i, quote }: { i: PastIdea; quote: Quote }) {
       <div className="flex flex-wrap items-center gap-2">
         <Link href={href} className="font-semibold hover:underline">{i.label}</Link>
         <Pill tone="slate">{MARKET_LABEL[i.market]}</Pill>
+        {i.paper && <Pill tone="amber">Paper · unvalidated strategy</Pill>}
         <DirectionBadge d={i.direction} />
         <span className="text-xs text-muted">{i.strategy}</span>
         <span className="ml-auto flex items-center gap-2">
@@ -127,6 +129,7 @@ export default function TrackRecordPage() {
   const { can } = useAuth();
   const [market, setMarket] = useState<MarketFilter>("ALL");
   const [show, setShow] = useState<ResultFilter>("all");
+  const [kind, setKind] = useState<Kind>("ideas");
   const q = useApi(() => api.signals.history(market === "ALL" ? undefined : market), [market]);
 
   const marketOptions = [
@@ -136,9 +139,11 @@ export default function TrackRecordPage() {
     ...(marketOn("CRYPTO") ? [{ value: "CRYPTO" as const, label: "Crypto" }] : []),
   ];
   const live = useLiveQuotes((q.data?.items ?? []).map((i) => quoteKey(i.market, i.move.of)));
-  const items = (q.data?.items ?? []).filter((i) => show === "all" || (show === "open" ? i.result === "open" : i.result !== "open"));
+  const items = (q.data?.items ?? [])
+    .filter((i) => (kind === "paper") === Boolean(i.paper))
+    .filter((i) => show === "all" || (show === "open" ? i.result === "open" : i.result !== "open"));
   const byDate = items.reduce<Record<string, PastIdea[]>>((acc, i) => ((acc[i.as_of] ??= []).push(i), acc), {});
-  const s = q.data?.summary;
+  const s = kind === "paper" ? q.data?.paper_summary : q.data?.summary;
 
   return (
     <>
@@ -150,6 +155,11 @@ export default function TrackRecordPage() {
         <div>
           <span className="label">Market</span>
           <Segmented<MarketFilter> label="Market filter" value={market} onChange={setMarket} options={marketOptions} />
+        </div>
+        <div>
+          <span className="label">Kind</span>
+          <Segmented<Kind> label="Ideas or paper trades" value={kind} onChange={setKind}
+            options={[{ value: "ideas", label: "Published ideas" }, { value: "paper", label: "Paper trades" }]} />
         </div>
         <div>
           <span className="label">Show</span>
@@ -178,6 +188,12 @@ export default function TrackRecordPage() {
             {q.data.note}
           </p>
           <LiveNote live={live} />
+          {kind === "paper" && (
+            <p className="-mt-2 mb-4 rounded border border-amber-800 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+              Paper trades come from strategies that are not validated out of sample (see Diagnostics). They are tracked to build evidence and
+              were never published as trade ideas. Do not trade them.
+            </p>
+          )}
 
           {items.length === 0 ? (
             <EmptyState title={s.ideas === 0 ? "No ideas published yet" : "Nothing matches this filter"}>

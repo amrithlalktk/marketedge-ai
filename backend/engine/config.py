@@ -46,7 +46,7 @@ class CostModel:
 @dataclass
 class LevelConfig:
     atr_stop_mult: float = 2.0
-    min_stop_atr: float = 0.8
+    min_stop_atr: float = 1.5  # structural stop only if ≥ this far (else 2×ATR); 0.8 → 1.5 cut stop-outs in BOTH halves of NSE 2023–26 (docs/DIAGNOSTICS.md)
     max_stop_atr: float = 3.5
     swing_buffer_atr: float = 0.2
     swing_lookback: int = 20

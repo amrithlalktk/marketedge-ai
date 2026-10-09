@@ -58,7 +58,11 @@ def options_report(db: Session) -> dict:
     def failed(checks):
         return [f"{c['name']}: {c.get('detail', '')}" for c in checks or [] if not c["passed"] and c["severity"] == "block"]
 
+    from app.services.scan_service import latest_run
+
+    run = latest_run(db, "NFO")
     return {"as_of": str(snap.as_of), "status": o.get("status"), "market_message": o.get("market_message"),
+            "validation": {k: v.get("status") for k, v in ((run.stats or {}).get("validation") or {}).items()} if run else None,
             "spot": (o.get("underlying") or {}).get("spot"), "market_state": (o.get("market_state") or {}).get("direction"),
             "iv_percentile": (o.get("iv") or {}).get("iv_percentile"),
             "nifty_setups": [{"strategy": u["strategy"]["name"], "direction": u["direction"], "status": u["status"], "failed": failed(u.get("checks"))}
@@ -81,6 +85,8 @@ def stocks_report(db: Session, market: str = "NSE") -> dict:
     failed = Counter(c["name"] for sg in sigs if sg.status == "NO_TRADE" for c in (sg.payload or {}).get("checks", [])
                      if not c["passed"] and c["severity"] == "block")
     return {"as_of": run.as_of, "candidates": len(sigs), "valid": sum(sg.status == "VALID" for sg in sigs),
+            "paper": sum(bool((sg.payload or {}).get("paper_trade")) for sg in sigs),
+            "validated_strategies": (run.stats or {}).get("validated_strategies"),
             "regime": ((run.stats or {}).get("regime") or {}), "market_message": (run.stats or {}).get("market_message"),
             "rejected_by": dict(failed.most_common(10)),
             "closest": [{"symbol": sg.symbol, "strategy": sg.strategy_key, "direction": sg.direction, "score": round(sg.score, 1),

@@ -157,10 +157,14 @@ def run_options(db: Session, today: Optional[date] = None) -> ScanRun:
         meta = _chain_meta(chain_df, ts, und.is_sample, today, cfg.validation.max_staleness_days)
         chain_cfg = ch.ChainConfig(r=s.risk_free_rate, q=s.dividend_yield)
         evs = []  # no economic calendar in the lite build
+        from engine.acceptance import evaluate as acceptance_eval
+        from engine.strategies import INDEX_STRATEGIES
+
+        acceptance = acceptance_eval(events, list(INDEX_STRATEGIES), today, cfg.validation) if cfg.validation.accept_enabled else None
         out = analyze_options(analyzer=analyzer, symbol=und.symbol, display_name=s.options_display_name, index_features=fi, events=events,
                               ctx=ctx, chain_raw=chain_df.drop(columns=["spot", "source", "lot_size"]), spot=spot, as_of=ts.astimezone(ch_ist()),
                               lot_size=lot, iv_history=ivh if len(ivh) else None, intraday_5m=m5, today=today, chain_meta=meta, prev_ltp=prev_ltp,
-                              chain_cfg=chain_cfg, macro_events=evs)
+                              chain_cfg=chain_cfg, macro_events=evs, acceptance=acceptance)
         if meta["delayed"]:
             out["market_message"] = "⚠ DATA DELAYED — option chain snapshot is stale; no setups are published."
             for st in out["option_setups"]:
@@ -184,7 +188,9 @@ def run_options(db: Session, today: Optional[date] = None) -> ScanRun:
         track_option_outcomes(db)
         db.add(MarketSnapshot(scan_run_id=run.id, market=MARKET, kind="options", as_of=ts.astimezone(ch_ist()).date(), payload=_json_safe(out)))
         run.as_of = ts.astimezone(ch_ist()).date()
-        run.stats = {"is_sample": bool(meta["is_sample"]), "option_setups": len(out["option_setups"]), "valid": sum(x["status"] == "VALID" for x in out["option_setups"]),
+        run.stats = {"validation": {k: {"status": v["status"], "reasons": v["reasons"], "out_of_sample": v.get("out_of_sample")}
+                                    for k, v in (acceptance or {}).items()},
+                     "is_sample": bool(meta["is_sample"]), "option_setups": len(out["option_setups"]), "valid": sum(x["status"] == "VALID" for x in out["option_setups"]),
                      "strategies_proposed": len(out["strategies"]["proposed"]), "index_events": int(len(events)), "status": out["status"],
                      "market_message": out["market_message"]}
         run.status, run.finished_at = "done", datetime.now(timezone.utc)

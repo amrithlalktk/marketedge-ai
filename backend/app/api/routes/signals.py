@@ -158,6 +158,7 @@ def _idea_row(sig: Signal, oc: SignalOutcome, latest: dict) -> dict:
            "strategy": ((u if opt else p).get("strategy") or {}).get("name", sig.strategy_key),
            "currency": "INR" if opt else p.get("currency"), "entry_zone": [p.get("entry")] * 2 if opt else p.get("entry_zone"),
            "stop": p.get("stop"), "targets": p.get("targets"), "chance_t1": pr.get("t1_hit_rate"), "sample_size": pr.get("sample_size") or 0,
+           "paper": sig.status != "VALID",  # unvalidated strategy: tracked for evidence, never published as an idea
            "result": _result(oc), "exit_reason": oc.exit_reason, "net_return_pct": oc.net_return_pct,
            "resolved_at": oc.resolved_at.isoformat() if oc.resolved_at else None,
            "move": {"of": u.get("symbol") if opt else sig.symbol, "price_then": then, "price_now": now,
@@ -185,21 +186,25 @@ def history(market: Optional[str] = Query(None, pattern="^(NSE|CRYPTO|NFO)$"), l
     rows = [(sig, oc) for sig, oc in rows if bool(sig.is_sample_data) == sample[sig.market]]
     latest = _latest_closes(db, {sig.instrument_id for sig, _ in rows})
     items = [_idea_row(sig, oc, latest) for sig, oc in rows]
-    done = [i for i in items if i["result"] in ("target1", "target2", "stop", "time")]
-    rets = [i["net_return_pct"] for i in done if i["net_return_pct"] is not None]
-    chances = [i["chance_t1"] for i in done if i["chance_t1"] is not None]
+    def summarise(group: list) -> dict:
+        done = [i for i in group if i["result"] in ("target1", "target2", "stop", "time")]
+        rets = [i["net_return_pct"] for i in done if i["net_return_pct"] is not None]
+        chances = [i["chance_t1"] for i in done if i["chance_t1"] is not None]
 
-    def pct(n: int) -> Optional[float]:
-        return round(100 * n / len(done), 1) if done else None
+        def pct(n: int) -> Optional[float]:
+            return round(100 * n / len(done), 1) if done else None
 
-    summary = {"ideas": len(items), "open": sum(i["result"] == "open" for i in items), "not_filled": sum(i["result"] == "not_filled" for i in items),
-               "closed": len(done), "target1_or_better": sum(i["result"] in ("target1", "target2") for i in done),
-               "target2": sum(i["result"] == "target2" for i in done), "stop": sum(i["result"] == "stop" for i in done),
-               "time": sum(i["result"] == "time" for i in done),
-               "target1_rate": pct(sum(i["result"] in ("target1", "target2") for i in done)), "stop_rate": pct(sum(i["result"] == "stop" for i in done)),
-               "expected_target1_rate": round(sum(chances) / len(chances), 1) if chances else None,
-               "avg_net_return_pct": round(sum(rets) / len(rets), 2) if rets else None}
-    return {"items": items, "summary": summary,
+        return {"ideas": len(group), "open": sum(i["result"] == "open" for i in group), "not_filled": sum(i["result"] == "not_filled" for i in group),
+                "closed": len(done), "target1_or_better": sum(i["result"] in ("target1", "target2") for i in done),
+                "target2": sum(i["result"] == "target2" for i in done), "stop": sum(i["result"] == "stop" for i in done),
+                "time": sum(i["result"] == "time" for i in done),
+                "target1_rate": pct(sum(i["result"] in ("target1", "target2") for i in done)), "stop_rate": pct(sum(i["result"] == "stop" for i in done)),
+                "expected_target1_rate": round(sum(chances) / len(chances), 1) if chances else None,
+                "avg_net_return_pct": round(sum(rets) / len(rets), 2) if rets else None}
+
+    summary = summarise([i for i in items if not i["paper"]])
+    paper_summary = summarise([i for i in items if i["paper"]])
+    return {"items": items, "summary": summary, "paper_summary": paper_summary,
             "note": ("Each published idea is followed from the next session's open with the backtest's rules: stop assumed first when a bar "
                      "touches both, breakeven after Target 1, closed at the strategy's maximum holding period. NIFTY option ideas are judged "
                      "on the NIFTY levels that triggered them; their return is the index move, not the option premium.")}

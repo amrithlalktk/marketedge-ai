@@ -53,8 +53,9 @@ def analyze_options(*, analyzer: Analyzer, symbol: str, display_name: str, index
                     iv_history: Optional[pd.Series], intraday_5m: Optional[pd.DataFrame], today: date,
                     chain_meta: dict, prev_ltp: Optional[pd.Series] = None,
                     chain_cfg: Optional[ch.ChainConfig] = None, opt_cfg: Optional[OptionsConfig] = None,
-                    macro_events: Optional[List[dict]] = None) -> Dict:
-    """`macro_events`: economic releases relevant to the underlying (e.g. IN + US for NIFTY)."""
+                    macro_events: Optional[List[dict]] = None, acceptance: Optional[Dict[str, dict]] = None) -> Dict:
+    """`macro_events`: economic releases relevant to the underlying (e.g. IN + US for NIFTY).
+    `acceptance`: out-of-sample validation of the index strategies (engine.acceptance); unvalidated ones never publish."""
     chain_cfg = chain_cfg or ch.ChainConfig()
     opt_cfg = opt_cfg or OptionsConfig()
     c = ch.enrich(chain_raw, spot, as_of, chain_cfg, lot_size)
@@ -78,7 +79,7 @@ def analyze_options(*, analyzer: Analyzer, symbol: str, display_name: str, index
 
     und = index_analyzer(analyzer).evaluate_symbol(symbol, index_features, events, ctx, today=today,
                                    instrument={"name": display_name, "exchange": "NSE", "currency": "INR", "is_index": True},
-                                   data_meta=chain_meta, strategies=list(INDEX_STRATEGIES.values()), market="NFO")
+                                   data_meta=chain_meta, strategies=list(INDEX_STRATEGIES.values()), market="NFO", acceptance=acceptance)
     setups = find_option_setups(c, spot, und, ivp, atm_near, lot_size, chain_cfg, opt_cfg, display_name, chain_meta)
 
     reg_df = ctx.regime_df

@@ -160,6 +160,9 @@ def daily_ideas_text(db: Session) -> Optional[dict]:
         why = [m for m in ((nfo.stats or {}).get("market_message") if nfo else None, (nse.stats or {}).get("market_message")) if m]
         title = f"No trade today ({as_of} close)"
         body = "No NIFTY option or stock setup passed every safety check. " + " ".join(why)
+        paper = (nse.stats or {}).get("paper") or 0
+        if paper and "paper trade" not in body:
+            body += f" {paper} setup(s) from unvalidated strategies are tracked as paper trades (Track record → Paper), not as ideas."
     return {"as_of": as_of, "title": title, "body": body, "ideas": len(lines)}
 
 

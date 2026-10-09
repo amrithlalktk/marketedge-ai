@@ -1117,6 +1117,8 @@ export interface PastIdea {
   chance_t1: number | null;
   sample_size: number;
   result: IdeaResult;
+  /** From a strategy that is not validated out of sample: tracked for evidence, never published as an idea. */
+  paper: boolean;
   exit_reason: string | null;
   net_return_pct: number | null;
   resolved_at: string | null;
@@ -1125,13 +1127,68 @@ export interface PastIdea {
   move: { of: string; price_then: number | null; price_now: number | null; as_of: string | null; change_pct: number | null };
 }
 
+export interface IdeaSummary {
+  ideas: number; open: number; not_filled: number; closed: number; target1_or_better: number; target2: number; stop: number; time: number;
+  target1_rate: number | null; stop_rate: number | null; expected_target1_rate: number | null; avg_net_return_pct: number | null;
+}
+
 export interface IdeaHistory {
   items: PastIdea[];
-  summary: {
-    ideas: number; open: number; not_filled: number; closed: number; target1_or_better: number; target2: number; stop: number; time: number;
-    target1_rate: number | null; stop_rate: number | null; expected_target1_rate: number | null; avg_net_return_pct: number | null;
-  };
+  summary: IdeaSummary;
+  paper_summary: IdeaSummary;
   note: string;
+}
+
+/** Outcome statistics of a set of historical trades (engine.diagnostics.outcome_stats). */
+export interface TradeStats {
+  trades: number;
+  t1_rate?: number; t2_rate?: number; stop_rate?: number; time_exit_rate?: number; win_rate?: number;
+  expectancy_r?: number; expectancy_se?: number | null; profit_factor?: number | null; max_drawdown_r?: number | null;
+  avg_net_return_pct?: number; avg_gross_return_pct?: number; avg_bars_held?: number; avg_mfe_r?: number; avg_mae_r?: number;
+  ambiguous_rate?: number;
+}
+export type GroupStats = TradeStats & { key: string };
+
+export interface StrategyValidation {
+  status: "VALIDATED" | "UNVALIDATED";
+  reasons: string[];
+  split?: string;
+  design_period?: [string, string];
+  oos_period?: [string, string];
+  design?: Partial<TradeStats>;
+  out_of_sample?: Partial<TradeStats>;
+  years_positive_pct?: number | null;
+  trades?: number;
+}
+
+export interface Calibration {
+  status: string;
+  avg_predicted_t1?: number;
+  actual_t1?: number;
+  overstatement_pts?: number;
+  period?: [string, string];
+  bands?: { predicted: string; trades: number; avg_predicted: number; actual: number }[];
+}
+
+export interface Diagnostics {
+  market: string;
+  period: [string, string];
+  data_audit: { instruments: number; bars: number; suspected_unadjusted_corporate_actions: number; symbols_affected: number;
+    examples: { symbol: string; date: string; ratio: number; looks_like: string }[]; trades_near_suspected_action_pct: number };
+  all_trades: { overall: TradeStats; loss_profile: Record<string, number | null>; by_strategy: GroupStats[]; by_regime: GroupStats[];
+    by_score_bucket: GroupStats[]; by_year: GroupStats[]; by_sector: GroupStats[]; by_exit_reason: GroupStats[] };
+  published_by_current_gate: { overall: TradeStats; loss_profile: Record<string, number | null>; by_strategy: GroupStats[];
+    by_regime: GroupStats[]; rejected_by: Record<string, number> };
+  gate_comparison: { split: string; period: [string, string]; policies: { policy: { name: string }; design: TradeStats;
+    out_of_sample: TradeStats; out_of_sample_calibration: Calibration }[] };
+  entry_too_close_to_stop?: { bands: (TradeStats & { risk_atr: string })[] };
+  track_record: { published: number; open: number; resolved: number; t1_hit: number; stop_hit: number;
+    replay_agreement?: { same: number; different: number } };
+  notes: string[];
+  is_sample?: boolean;
+  snapshot_created_at?: string;
+  validation: { strategies: Record<string, StrategyValidation> | null; validated: string[]; calibration: Calibration; as_of: string;
+    enabled: boolean } | null;
 }
 
 export interface LiveQuotes {

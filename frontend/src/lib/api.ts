@@ -11,6 +11,7 @@ import type {
   AlertIn,
   AlertItem,
   AlertKind,
+  Diagnostics,
   IdeaHistory,
   JournalIn,
   LiveQuotes,
@@ -238,6 +239,7 @@ export const api = {
     regime: (history = 90, market?: string) => request<{ current: Regime; history: { as_of: string; regime: string; volatility: string }[] }>("/markets/regime", { query: { history, market } }),
     breadth: (market?: string) => request<Breadth>("/markets/breadth", { query: { market } }),
     sectors: (market?: string) => request<Sectors>("/markets/sectors", { query: { market } }),
+    diagnostics: (market?: string) => request<Diagnostics>("/markets/diagnostics", { query: { market } }),
   },
   signals: {
     top: (q: { sort?: SortKey; direction?: string; limit?: number; market?: string } = {}) => request<TopSetups>("/signals/top", { query: q }),

@@ -105,3 +105,80 @@ def test_acceptance_needs_out_of_sample_evidence_and_rejects_a_faded_edge():
     assert res["missing"]["status"] == UNVALIDATED
     few = evaluate(ev[ev["strategy_id"] == "good"].head(80), ["good"], "2023-06-01", cfg)
     assert few["good"]["status"] == UNVALIDATED and "out-of-sample trades" in few["good"]["reasons"][0]
+
+
+def test_scan_stores_validation_and_diagnostics_and_never_publishes_unvalidated_strategies(app_client, admin_headers, scanned):
+    d = app_client.get("/api/v1/markets/diagnostics?market=NSE", headers=admin_headers)
+    assert d.status_code == 200, d.text
+    body = d.json()
+    assert body["all_trades"]["overall"]["trades"] > 0 and "loss_profile" in body["all_trades"]
+    assert body["gate_comparison"]["policies"] and body["validation"]["enabled"]
+    statuses = {v["status"] for v in body["validation"]["strategies"].values()}
+    assert statuses <= {"VALIDATED", "UNVALIDATED"}
+    validated = set(body["validation"]["validated"])
+    top = app_client.get("/api/v1/signals/top?market=NSE&limit=50", headers=admin_headers).json()
+    for s in top["items"]:  # every published idea comes from a validated strategy
+        assert s["strategy_id"] in validated
+    for s in app_client.get("/api/v1/signals?status=NO_TRADE&market=NSE", headers=admin_headers).json()["items"]:
+        names = [c.split(":")[0] for c in s["blocking_checks"]]
+        if s["strategy_id"] not in validated:
+            assert "Strategy validation (out-of-sample)" in names
+
+
+@pytest.mark.parametrize("path,expected", [("up", "target2"), ("down", "stop"), ("flat", "time")])
+def test_tracker_history_page_and_replay_agree(app_client, admin_headers, scanned, path, expected):
+    """A published stock idea is resolved by the tracker with the same rules as a direct replay, and the prediction-history
+    page reports exactly that result — the original stop and targets are never changed."""
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from app.core.db import SessionLocal
+    from app.models import Instrument, ScanRun, Signal, SignalOutcome
+    from app.services.scan_service import resolve_outcomes
+    from app.services.settings_service import engine_config
+    from engine.backtest import simulate_trade as sim
+    from engine.config import BacktestConfig as BTC
+    from engine.features import build_features
+
+    idx = pd.bdate_range("2025-01-01", periods=120)
+    step = {"up": 0.5, "down": -0.5, "flat": 0.0}[path]
+    close = pd.Series([100.0 + (step * (i - 80) if i > 80 else 0.01 * (i % 2)) for i in range(120)], index=idx)
+    f = build_features(pd.DataFrame({"open": close, "high": close + 0.6, "low": close - 0.6, "close": close, "volume": 1e6}, index=idx))
+    t, c = 80, float(close.iloc[80])
+    stop, t1, t2 = c - 3.0, c + 4.0, c + 8.0
+    sym = f"DIAG_{path.upper()}"
+    db = SessionLocal()
+    try:
+        ins = db.scalar(select(Instrument).where(Instrument.market == "NSE", Instrument.is_index.is_(False)))
+        run = db.scalar(select(ScanRun).where(ScanRun.market == "NSE", ScanRun.status == "done"))
+        payload = {"symbol": sym, "current_price": c, "entry_zone": [c, c], "stop": stop, "targets": [t1, t2, t2 + 4],
+                   "strategy": {"id": "pullback_ema20", "name": "Trend Pullback"}, "probability": {"t1_hit_rate": 40.0, "sample_size": 50}}
+        sig = Signal(scan_run_id=run.id, instrument_id=ins.id, symbol=sym, market="NSE", strategy_key="pullback_ema20", direction="LONG",
+                     status="VALID", as_of=date.fromisoformat(str(idx[t].date())), score=70, rr_t2=2.6, payload=payload,
+                     is_sample_data=True)
+        db.add(sig)
+        db.flush()
+        db.add(SignalOutcome(signal_id=sig.id, status="open"))
+        db.commit()
+        cfg = engine_config(db)
+        resolve_outcomes(db, {sym: f}, cfg.backtest, cfg.levels.max_chase_atr, "NSE", cfg.levels.min_fill_risk_atr)
+        oc = db.get(SignalOutcome, sig.id)
+        direct = sim(f, t, "LONG", stop, t1, t2, BTC(max_hold_bars=20, partial_at_t1=cfg.backtest.partial_at_t1, costs=cfg.backtest.costs),
+                     cfg.levels.max_chase_atr, min_risk_atr=cfg.levels.min_fill_risk_atr)
+        assert (oc.t1_hit, oc.t2_hit, oc.stop_hit, oc.exit_reason) == (direct.t1_hit, direct.t2_hit, direct.stop_hit, direct.exit_reason)
+        assert oc.net_return_pct == direct.net_return_pct
+        assert db.get(Signal, sig.id).payload["stop"] == stop  # the published stop is never rewritten
+        sid = sig.id
+    finally:
+        db.close()
+    try:
+        row = next(i for i in app_client.get("/api/v1/signals/history?market=NSE", headers=admin_headers).json()["items"] if i["id"] == sid)
+        assert row["result"] == expected and row["stop"] == stop and row["targets"][:2] == [t1, t2]
+        assert row["net_return_pct"] == direct.net_return_pct and row["paper"] is False
+    finally:  # the synthetic idea must not leak into the setup lists other tests read
+        db = SessionLocal()
+        db.delete(db.get(SignalOutcome, sid))  # SQLite does not enforce the ON DELETE CASCADE
+        db.delete(db.get(Signal, sid))
+        db.commit()
+        db.close()

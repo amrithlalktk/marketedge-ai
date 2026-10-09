@@ -499,6 +499,7 @@ def test_review_data_pruned_after_30_days_track_record_kept(app_client, scanned)
         assert db.get(Signal, recent) is not None
         assert db.get(MarketSnapshot, snap_id) is None  # an older overview exists, newer ones are kept
         assert db.scalar(select(MarketSnapshot).where(MarketSnapshot.market == "NSE", MarketSnapshot.kind == "overview")) is not None
+        db.delete(db.get(SignalOutcome, published))  # SQLite does not enforce the ON DELETE CASCADE
         db.delete(db.get(Signal, published))
         db.commit()
     finally:

@@ -76,7 +76,7 @@ def compute_levels(f: pd.DataFrame, t: int, direction: str, cfg: LevelConfig, en
             stop_method = f"Below last confirmed swing {'low' if sign == 1 else 'high'} with 0.2×ATR buffer ({dist:.1f} ATR)"
     if stop is None:
         stop = entry - sign * cfg.atr_stop_mult * a
-        stop_method = f"{cfg.atr_stop_mult:g}×ATR from entry (no swing level within 0.8–3.5 ATR)"
+        stop_method = f"{cfg.atr_stop_mult:g}×ATR from entry (no swing level within {cfg.min_stop_atr:g}–{cfg.max_stop_atr:g} ATR)"
     risk = abs(entry - stop)
 
     # --- targets: S/R aware, R-multiple bounded ----------------------------------------
